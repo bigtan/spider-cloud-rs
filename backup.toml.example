@@ -1,0 +1,33 @@
+# ====================
+# 应用配置
+# ====================
+
+[app]
+baidu_enabled = true
+baidu_app_key = "your_baidu_app_key"
+baidu_app_secret = "your_baidu_app_secret"
+# baidu_config = "/path/to/baidu_pan_config.json"
+
+cloud189_enabled = true
+# cloud189_config = "/path/to/cloud189/config.json"
+# cloud189_username = "your_cloud189_username"
+# cloud189_password = "your_cloud189_password"
+cloud189_use_qr = true
+
+# ====================
+# 备份任务
+# ====================
+
+[[backups]]
+source_dir = "/var/www/example-app/"
+remote_dir = "/apps/backups/{date}"
+archive_name = "example-app"
+keep_archive = false
+
+[[backups]]
+command = "mysqldump -u user -ppassword dbname > /tmp/db.sql"
+source_path = "/tmp/db.sql"
+keep_command_source = false
+remote_dir = "/apps/backups/{date}"
+archive_name = "database"
+keep_archive = false

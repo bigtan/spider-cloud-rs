@@ -1,0 +1,70 @@
+# ====================
+# 基础配置
+# ====================
+
+debug = false
+server_location = "Production Server"
+upload_mode = "archive"
+
+# ====================
+# Archive 模式
+# ====================
+
+archive_source_folder = "/path/to/source/{date}/"
+archive_output = "/path/to/archive/{date}.7z"
+archive_password = ""
+require_archive = true
+
+# ====================
+# Files 模式
+# ====================
+
+files_source_folder = "/path/to/source/{date}/"
+file_pattern = "*.csv"
+
+# ====================
+# 上传目标路径
+# ====================
+
+archive_upload_path = "/apps/archive/{server_location}/{date}/"
+files_upload_path = "/apps/files/{server_location}/{date}/"
+
+# ====================
+# 通知配置
+# ====================
+
+chanify_enabled = false
+chanify_url = "https://chanify.estan.cn/v1/sender/"
+chanify_token = ""
+
+email_enabled = false
+email_sender = ""
+email_password = ""
+email_recipient = ""
+
+pushgo_enabled = false
+pushgo_url = "https://pushgo.estan.cn/message"
+pushgo_api_token = ""
+pushgo_hex_key = ""
+pushgo_channel_id = ""
+pushgo_password = ""
+pushgo_icon = ""
+pushgo_image = ""
+
+# ====================
+# 云盘配置
+# ====================
+
+baidu_enabled = false
+baidu_app_key = ""
+baidu_app_secret = ""
+baidu_archive_upload_path = ""
+baidu_files_upload_path = ""
+
+cloud189_enabled = false
+cloud189_config_path = ""
+cloud189_username = ""
+cloud189_password = ""
+cloud189_qr_login = false
+cloud189_archive_upload_path = ""
+cloud189_files_upload_path = ""

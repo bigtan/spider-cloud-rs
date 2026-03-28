@@ -1,0 +1,40 @@
+# ====================
+# 基础配置
+# ====================
+
+debug = false
+captcha_model_path = "models/model.onnx"
+captcha_vocab_path = "models/vocab.txt"
+
+# ====================
+# 账户配置
+# ====================
+
+[account]
+accounts = ["account1", "account2"]
+passwords = ["password1", "password2"]
+
+# ====================
+# 通知配置
+# ====================
+
+[notifier.chanify]
+enabled = false
+url = "https://chanify.estan.cn/v1/sender/"
+token = ""
+
+[notifier.email]
+enabled = false
+sender = ""
+password = ""
+recipient = ""
+
+[notifier.pushgo]
+enabled = false
+url = "https://pushgo.estan.cn/message"
+api_token = ""
+channel_id = ""
+password = ""
+hex_key = ""
+icon = ""
+image = ""

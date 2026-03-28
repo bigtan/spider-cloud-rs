@@ -1,0 +1,43 @@
+name: Build Rust Project
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Build all binaries
+        run: cargo build --release --bins
+      - name: Run tests
+        run: cargo test --release --all-targets
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: spider-cloud-rs-${{ matrix.os }}
+          path: |
+            target/release/backup-to-cloud.exe
+            target/release/backup-to-cloud
+            target/release/cfmmc-crawler-rs.exe
+            target/release/cfmmc-crawler-rs
+            target/release/cloud-uploader-rs.exe
+            target/release/cloud-uploader-rs
+          retention-days: 7
+    
