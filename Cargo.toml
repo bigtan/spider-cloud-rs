@@ -28,7 +28,7 @@ reqwest = { version = "0.13", features = ["blocking", "json", "multipart", "form
 rsa = { version = "0.9", features = ["pem"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sha1 = "0.10"
+sha1 = "0.11"
 tar = "0.4"
 toml = "1.0"
 tracing = "0.1"
