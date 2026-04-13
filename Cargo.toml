@@ -17,7 +17,7 @@ hex = "0.4"
 hmac = "0.12"
 httpdate = "1"
 image = "0.25"
-indexmap = "2.13"
+indexmap = "2.14"
 lettre = { version = "0.11", features = ["builder", "smtp-transport", "rustls-tls"] }
 md5 = "0.8"
 ndarray = "0.17"
