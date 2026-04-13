@@ -47,6 +47,8 @@ const UPLOAD_PART_MAX_RETRIES: u32 = 3;
 const UPLOAD_PART_BACKOFF_BASE_MS: u64 = 800;
 const UPLOAD_REQ_MAX_RETRIES: u32 = 3;
 const UPLOAD_REQ_BACKOFF_BASE_MS: u64 = 800;
+const COMMIT_UPLOAD_MAX_RETRIES: u32 = 5;
+const COMMIT_UPLOAD_BACKOFF_BASE_MS: u64 = 1_000;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Cloud189Config {
@@ -1126,12 +1128,26 @@ impl Cloud189Client {
             params.push(("sliceMd5".to_string(), s.to_string()));
             params.push(("lazyCheck".to_string(), l.to_string()));
         }
-        let resp = self.upload_get_with_retry("/person/commitMultiUploadFile", &params)?;
-        let result: CommitUploadResp = resp.json().context("decode commit")?;
-        if !is_success_code(&result.code) {
-            return Err(anyhow!("commit upload error: {}", result.code));
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let resp = self.upload_get_with_retry("/person/commitMultiUploadFile", &params)?;
+            let result: CommitUploadResp = resp.json().context("decode commit")?;
+            if is_success_code(&result.code) {
+                return Ok(());
+            }
+
+            if !is_retryable_commit_code(&result.code) || attempt >= COMMIT_UPLOAD_MAX_RETRIES {
+                return Err(anyhow!("commit upload error: {}", result.code));
+            }
+
+            let backoff = COMMIT_UPLOAD_BACKOFF_BASE_MS * attempt as u64;
+            warn!(
+                "Commit upload returned retryable code '{}' (attempt {}/{}), retrying after {}ms",
+                result.code, attempt, COMMIT_UPLOAD_MAX_RETRIES, backoff
+            );
+            sleep(Duration::from_millis(backoff));
         }
-        Ok(())
     }
 
     fn upload_get(&self, path: &str, params: &[(String, String)]) -> Result<Response> {
@@ -1568,6 +1584,11 @@ fn is_success_code(code: &str) -> bool {
     c == "0" || c.eq_ignore_ascii_case("success")
 }
 
+fn is_retryable_commit_code(code: &str) -> bool {
+    let c = code.trim();
+    c.eq_ignore_ascii_case("incomplete upload")
+}
+
 fn chrono_millis() -> i64 {
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -1585,5 +1606,24 @@ where
         serde_json::Value::String(s) => Ok(s),
         serde_json::Value::Number(n) => Ok(n.to_string()),
         _ => Err(Error::custom("invalid id")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_retryable_commit_code, is_success_code};
+
+    #[test]
+    fn success_code_accepts_zero_and_success() {
+        assert!(is_success_code("0"));
+        assert!(is_success_code(" success "));
+        assert!(!is_success_code("incomplete upload"));
+    }
+
+    #[test]
+    fn retryable_commit_code_accepts_incomplete_upload() {
+        assert!(is_retryable_commit_code("incomplete upload"));
+        assert!(is_retryable_commit_code(" Incomplete Upload "));
+        assert!(!is_retryable_commit_code("permission denied"));
     }
 }
