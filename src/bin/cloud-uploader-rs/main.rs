@@ -18,9 +18,7 @@ use crate::utils::find_files_by_pattern;
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
-    let config_path = args
-        .next()
-        .unwrap_or_else(|| "config.toml".to_string());
+    let config_path = args.next().unwrap_or_else(|| "config.toml".to_string());
     if args.next().is_some() {
         anyhow::bail!("Too many arguments");
     }

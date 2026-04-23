@@ -49,6 +49,8 @@ const UPLOAD_REQ_MAX_RETRIES: u32 = 3;
 const UPLOAD_REQ_BACKOFF_BASE_MS: u64 = 800;
 const COMMIT_UPLOAD_MAX_RETRIES: u32 = 5;
 const COMMIT_UPLOAD_BACKOFF_BASE_MS: u64 = 1_000;
+const DIR_OP_MAX_RETRIES: u32 = 3;
+const DIR_OP_BACKOFF_BASE_MS: u64 = 1_000;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Cloud189Config {
@@ -324,6 +326,7 @@ struct XmlFolder {
     name: String,
 }
 
+#[derive(Debug)]
 struct ListFilesResult {
     folders: Vec<Folder>,
     count: Option<i32>,
@@ -474,13 +477,24 @@ impl Cloud189Client {
     }
 
     fn ensure_session(&mut self) -> Result<()> {
-        if self.try_refresh_session()? {
-            return Ok(());
+        match self.try_refresh_session() {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                if self.has_valid_session() {
+                    Ok(())
+                } else {
+                    Err(anyhow!("missing valid session, please login again"))
+                }
+            }
+            Err(err) => {
+                if self.has_valid_session() {
+                    warn!("refresh session failed, keep using existing session: {err}");
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }
         }
-        if self.has_valid_session() {
-            return Ok(());
-        }
-        Err(anyhow!("missing valid session, please login again"))
     }
 
     fn try_refresh_session(&mut self) -> Result<bool> {
@@ -929,7 +943,7 @@ impl Cloud189Client {
         self.config.session = Some(merged);
     }
 
-    fn resolve_folder(&self, remote_dir: &str, create: bool) -> Result<String> {
+    fn resolve_folder(&mut self, remote_dir: &str, create: bool) -> Result<String> {
         let mut current = ROOT_FOLDER_ID.to_string();
         let cleaned = remote_dir.trim();
         if cleaned == "/" || cleaned.is_empty() {
@@ -956,28 +970,26 @@ impl Cloud189Client {
         Ok(current)
     }
 
-    fn list_folders(&self, parent_id: &str) -> Result<Vec<Folder>> {
+    fn list_folders(&mut self, parent_id: &str) -> Result<Vec<Folder>> {
+        match self.list_folders_once(parent_id) {
+            Ok(folders) => Ok(folders),
+            Err(err) if is_session_related_error(&err) => {
+                warn!(
+                    "list files returned a session-related error, refreshing session and retrying once: {err}"
+                );
+                self.try_refresh_session()
+                    .context("refresh session after list files failure")?;
+                self.list_folders_once(parent_id)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn list_folders_once(&self, parent_id: &str) -> Result<Vec<Folder>> {
         let mut page = 1;
         let mut folders = Vec::new();
         loop {
-            let params = vec![
-                ("folderId".to_string(), parent_id.to_string()),
-                ("fileType".to_string(), "0".to_string()),
-                ("mediaType".to_string(), "0".to_string()),
-                ("mediaAttr".to_string(), "0".to_string()),
-                ("iconOption".to_string(), "0".to_string()),
-                ("orderBy".to_string(), "filename".to_string()),
-                ("descending".to_string(), "true".to_string()),
-                ("pageNum".to_string(), page.to_string()),
-                ("pageSize".to_string(), "100".to_string()),
-            ];
-            let url = with_query(&format!("{API_BASE}/listFiles.action"), &params)?;
-            let url = with_client_params(url);
-            let mut req = self.client.get(url);
-            req = self.apply_signature(req, "GET", "/listFiles.action", None)?;
-            let resp = req.send().context("list files")?;
-            let text = resp.text().context("read list files body")?;
-            let data = parse_list_files_text(&text)?;
+            let data = self.list_folders_page(parent_id, page)?;
             folders.extend(data.folders);
             match (data.count, data.page_size) {
                 (Some(count), Some(page_size)) => {
@@ -992,26 +1004,120 @@ impl Cloud189Client {
         Ok(folders)
     }
 
-    fn create_folder(&self, parent_id: &str, name: &str) -> Result<String> {
-        let params = vec![
-            ("folderName".to_string(), name.to_string()),
-            ("relativePath".to_string(), "".to_string()),
-            ("parentFolderId".to_string(), parent_id.to_string()),
-        ];
-        let url = with_client_params(Url::parse(&format!("{API_BASE}/createFolder.action"))?);
-        let mut req = self
-            .client
-            .post(url)
-            .header(
-                reqwest::header::CONTENT_TYPE,
-                "application/x-www-form-urlencoded",
-            )
-            .body(encode_form_urlencoded(&params));
-        req = self.apply_signature(req, "POST", "/createFolder.action", None)?;
-        let resp = req.send().context("create folder")?;
-        let text = resp.text().context("read create folder body")?;
-        let id = parse_mkdir_text(&text)?;
-        Ok(id)
+    fn list_folders_page(&self, parent_id: &str, page: i32) -> Result<ListFilesResult> {
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let params = vec![
+                ("folderId".to_string(), parent_id.to_string()),
+                ("fileType".to_string(), "0".to_string()),
+                ("mediaType".to_string(), "0".to_string()),
+                ("mediaAttr".to_string(), "0".to_string()),
+                ("iconOption".to_string(), "0".to_string()),
+                ("orderBy".to_string(), "filename".to_string()),
+                ("descending".to_string(), "true".to_string()),
+                ("pageNum".to_string(), page.to_string()),
+                ("pageSize".to_string(), "100".to_string()),
+            ];
+            let result = (|| -> Result<ListFilesResult> {
+                let url = with_query(&format!("{API_BASE}/listFiles.action"), &params)?;
+                let url = with_client_params(url);
+                let mut req = self.client.get(url);
+                req = self.apply_signature(req, "GET", "/listFiles.action", None)?;
+                let resp = req.send().context("list files")?;
+                let status = resp.status();
+                let text = resp.text().context("read list files body")?;
+                if !status.is_success() {
+                    return Err(anyhow!(
+                        "list files http error {} body: {}",
+                        status,
+                        snippet(&text)
+                    ));
+                }
+                parse_list_files_text(&text)
+            })();
+
+            match result {
+                Ok(data) => return Ok(data),
+                Err(err) => {
+                    if attempt >= DIR_OP_MAX_RETRIES || !is_retryable_dir_error(&err) {
+                        return Err(err);
+                    }
+                    let backoff = DIR_OP_BACKOFF_BASE_MS * attempt as u64;
+                    warn!(
+                        "list files hit a transient error (attempt {}/{}), retrying after {}ms: {}",
+                        attempt, DIR_OP_MAX_RETRIES, backoff, err
+                    );
+                    sleep(Duration::from_millis(backoff));
+                }
+            }
+        }
+    }
+
+    fn create_folder(&mut self, parent_id: &str, name: &str) -> Result<String> {
+        match self.create_folder_once(parent_id, name) {
+            Ok(id) => Ok(id),
+            Err(err) if is_session_related_error(&err) => {
+                warn!(
+                    "create folder returned a session-related error, refreshing session and retrying once: {err}"
+                );
+                self.try_refresh_session()
+                    .context("refresh session after create folder failure")?;
+                self.create_folder_once(parent_id, name)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn create_folder_once(&self, parent_id: &str, name: &str) -> Result<String> {
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let params = vec![
+                ("folderName".to_string(), name.to_string()),
+                ("relativePath".to_string(), "".to_string()),
+                ("parentFolderId".to_string(), parent_id.to_string()),
+            ];
+            let result = (|| -> Result<String> {
+                let url =
+                    with_client_params(Url::parse(&format!("{API_BASE}/createFolder.action"))?);
+                let mut req = self
+                    .client
+                    .post(url)
+                    .header(
+                        reqwest::header::CONTENT_TYPE,
+                        "application/x-www-form-urlencoded",
+                    )
+                    .body(encode_form_urlencoded(&params));
+                req = self.apply_signature(req, "POST", "/createFolder.action", None)?;
+                let resp = req.send().context("create folder")?;
+                let status = resp.status();
+                let text = resp.text().context("read create folder body")?;
+                if !status.is_success() {
+                    return Err(anyhow!(
+                        "create folder http error {} body: {}",
+                        status,
+                        snippet(&text)
+                    ));
+                }
+                parse_mkdir_text(&text)
+            })();
+
+            match result {
+                Ok(id) => return Ok(id),
+                Err(err) => {
+                    if attempt >= DIR_OP_MAX_RETRIES || !is_retryable_dir_error(&err) {
+                        return Err(err);
+                    }
+                    let backoff = DIR_OP_BACKOFF_BASE_MS * attempt as u64;
+                    warn!(
+                        "create folder hit a transient error (attempt {}/{}), retrying after {}ms: {}",
+                        attempt, DIR_OP_MAX_RETRIES, backoff, err
+                    );
+                    sleep(Duration::from_millis(backoff));
+                }
+            }
+        }
     }
 
     fn upload_file(&self, local: &Path, parent_id: &str) -> Result<()> {
@@ -1517,6 +1623,65 @@ fn is_user_invalid_token(err: &anyhow::Error) -> bool {
     msg.contains("UserInvalidOpenToken")
 }
 
+fn is_session_related_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+    [
+        "userinvalidopentoken",
+        "invalidsessionkey",
+        "sessionkey",
+        "access token",
+        "token",
+        "signature",
+        "sign error",
+        "login",
+        "please login",
+        "认证",
+        "鉴权",
+        "签名",
+        "登录",
+    ]
+    .iter()
+    .any(|needle| msg.contains(needle))
+}
+
+fn is_retryable_dir_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+    [
+        "timed out",
+        "timeout",
+        "connection reset",
+        "connection refused",
+        "connection aborted",
+        "dns error",
+        "transport error",
+        "unexpected eof",
+        "broken pipe",
+        "temporarily unavailable",
+        "temporary",
+        "service unavailable",
+        "system busy",
+        "server busy",
+        "too many requests",
+        "bad gateway",
+        "gateway timeout",
+        "internal server error",
+        "502 bad gateway",
+        "503 service unavailable",
+        "504 gateway timeout",
+        "429 too many requests",
+        "http error 500",
+        "http error 502",
+        "http error 503",
+        "http error 504",
+        "<html",
+        "<!doctype html",
+        "nginx",
+        "openresty",
+    ]
+    .iter()
+    .any(|needle| msg.contains(needle))
+}
+
 fn snippet(text: &str) -> String {
     let trimmed = text.trim();
     let max = 200;
@@ -1549,7 +1714,11 @@ fn parse_list_files_text(text: &str) -> Result<ListFilesResult> {
     let data: ListFilesResp = serde_json::from_str(text)
         .with_context(|| format!("decode list files json body: {}", snippet(text)))?;
     if data.res_code != 0 {
-        return Err(anyhow!("list files error: {}", data.res_message));
+        return Err(anyhow!(
+            "list files error (res_code {}): {}",
+            data.res_code,
+            data.res_message
+        ));
     }
     Ok(ListFilesResult {
         folders: data.file_list.folders,
@@ -1574,7 +1743,11 @@ fn parse_mkdir_text(text: &str) -> Result<String> {
     let data: MkdirResp = serde_json::from_str(text)
         .with_context(|| format!("decode create folder json body: {}", snippet(text)))?;
     if data.res_code != 0 {
-        return Err(anyhow!("create folder error: {}", data.res_message));
+        return Err(anyhow!(
+            "create folder error (res_code {}): {}",
+            data.res_code,
+            data.res_message
+        ));
     }
     Ok(data.id)
 }
@@ -1611,7 +1784,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{is_retryable_commit_code, is_success_code};
+    use super::{
+        is_retryable_commit_code, is_retryable_dir_error, is_session_related_error,
+        is_success_code, parse_list_files_text,
+    };
+    use anyhow::anyhow;
 
     #[test]
     fn success_code_accepts_zero_and_success() {
@@ -1625,5 +1802,43 @@ mod tests {
         assert!(is_retryable_commit_code("incomplete upload"));
         assert!(is_retryable_commit_code(" Incomplete Upload "));
         assert!(!is_retryable_commit_code("permission denied"));
+    }
+
+    #[test]
+    fn session_related_error_matches_common_auth_failures() {
+        assert!(is_session_related_error(&anyhow!(
+            "list files error (res_code -6): InvalidSessionKey"
+        )));
+        assert!(is_session_related_error(&anyhow!(
+            "list files error (res_code 401): please login again"
+        )));
+        assert!(!is_session_related_error(&anyhow!(
+            "list files error (res_code 12): parent folder not found"
+        )));
+    }
+
+    #[test]
+    fn list_files_error_keeps_res_code() {
+        let err = parse_list_files_text(
+            r#"{"res_code":-6,"res_message":"InvalidSessionKey","fileListAO":{"count":0,"fileListSize":0,"folderList":[]}}"#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("list files error (res_code -6): InvalidSessionKey")
+        );
+    }
+
+    #[test]
+    fn retryable_dir_error_matches_common_transient_failures() {
+        assert!(is_retryable_dir_error(&anyhow!(
+            "list files http error 503 Service Unavailable body: <html>busy</html>"
+        )));
+        assert!(is_retryable_dir_error(&anyhow!(
+            "create folder: operation timed out"
+        )));
+        assert!(!is_retryable_dir_error(&anyhow!(
+            "create folder error (res_code 12): parent folder not found"
+        )));
     }
 }

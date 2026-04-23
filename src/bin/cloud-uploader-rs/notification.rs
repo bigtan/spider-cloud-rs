@@ -166,7 +166,6 @@ impl NotificationManager {
         );
         self.send(&subject, &message);
     }
-
 }
 
 fn format_chanify_message(subject: &str, message: &str) -> String {

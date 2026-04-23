@@ -36,4 +36,3 @@ pub fn find_files_by_pattern(source_folder: &str, pattern: &str) -> Result<Vec<P
     info!("Found {} file(s) matching pattern", files.len());
     Ok(files)
 }
-
