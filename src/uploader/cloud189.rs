@@ -7,13 +7,12 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use aes::Aes128;
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::cipher::{Block, BlockCipherEncrypt, KeyInit as AesKeyInit};
 use anyhow::{Context, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use chrono::Local;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use httpdate::fmt_http_date;
 use quick_xml::de::from_str as xml_from_str;
 use reqwest::blocking::{Client, Response};
@@ -1396,7 +1395,7 @@ fn aes_ecb_hex(data: &[u8], secret: &str) -> Result<String> {
     let pad = 16 - (buf.len() % 16);
     buf.extend(std::iter::repeat(pad as u8).take(pad));
     for chunk in buf.chunks_mut(16) {
-        let block = GenericArray::from_mut_slice(chunk);
+        let block = <&mut Block<Aes128>>::try_from(chunk).expect("aes block size");
         cipher.encrypt_block(block);
     }
     Ok(hex::encode(buf))
@@ -1495,7 +1494,7 @@ fn parse_request_headers(raw: &str) -> Result<HeaderMap> {
 }
 
 fn hmac_sha1_hex(data: &str, key: &[u8]) -> String {
-    let mut mac = <Hmac<Sha1> as Mac>::new_from_slice(key).expect("hmac");
+    let mut mac = <Hmac<Sha1> as HmacKeyInit>::new_from_slice(key).expect("hmac");
     mac.update(data.as_bytes());
     hex::encode(mac.finalize().into_bytes())
 }
