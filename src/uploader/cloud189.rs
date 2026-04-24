@@ -1139,9 +1139,12 @@ impl Cloud189Client {
                 r#"{"opScene":"1","relativepath":"","rootfolderid":""}"#.to_string(),
             ),
         ];
-        let init = self.upload_get_with_retry("/person/initMultiUpload", &init_params)?;
-        let init_resp: InitUploadResp = init.json().context("decode init upload")?;
+        let init_resp: InitUploadResp =
+            self.upload_json_with_retry("init upload", "/person/initMultiUpload", &init_params)?;
         if !is_success_code(&init_resp.code) {
+            if is_retryable_upload_code(&init_resp.code) {
+                return Err(anyhow!("init upload retry exhausted: {}", init_resp.code));
+            }
             return Err(anyhow!("init upload error: {}", init_resp.code));
         }
         let upload_id = init_resp.data.upload_file_id;
@@ -1158,8 +1161,8 @@ impl Cloud189Client {
             ("partInfo".to_string(), part_info.join(",")),
             ("uploadFileId".to_string(), upload_id.clone()),
         ];
-        let url_resp = self.upload_get_with_retry("/person/getMultiUploadUrls", &url_params)?;
-        let urls: UploadUrlsResp = url_resp.json().context("decode upload urls")?;
+        let urls: UploadUrlsResp =
+            self.upload_json_with_retry("upload urls", "/person/getMultiUploadUrls", &url_params)?;
         if !is_success_code(&urls.code) {
             return Err(anyhow!("get upload urls error: {}", urls.code));
         }
@@ -1236,8 +1239,11 @@ impl Cloud189Client {
         let mut attempt = 0;
         loop {
             attempt += 1;
-            let resp = self.upload_get_with_retry("/person/commitMultiUploadFile", &params)?;
-            let result: CommitUploadResp = resp.json().context("decode commit")?;
+            let result: CommitUploadResp = self.upload_json_with_retry(
+                "commit upload",
+                "/person/commitMultiUploadFile",
+                &params,
+            )?;
             if is_success_code(&result.code) {
                 return Ok(());
             }
@@ -1277,22 +1283,60 @@ impl Cloud189Client {
         Ok(resp)
     }
 
-    fn upload_get_with_retry(&self, path: &str, params: &[(String, String)]) -> Result<Response> {
+    fn upload_json_with_retry<T>(
+        &self,
+        label: &str,
+        path: &str,
+        params: &[(String, String)],
+    ) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
         let mut attempt = 0;
         loop {
             attempt += 1;
-            let resp = self.upload_get(path, params);
-            match resp {
-                Ok(resp) => return Ok(resp),
+            let result = self.upload_json(label, path, params);
+            match result {
+                Ok(data) => return Ok(data),
                 Err(err) => {
-                    if attempt >= UPLOAD_REQ_MAX_RETRIES {
+                    if attempt >= UPLOAD_REQ_MAX_RETRIES || !is_retryable_upload_error(&err) {
                         return Err(err);
                     }
+                    let backoff = UPLOAD_REQ_BACKOFF_BASE_MS * attempt as u64;
+                    warn!(
+                        "{} hit a transient upload API error (attempt {}/{}), retrying after {}ms: {}",
+                        label, attempt, UPLOAD_REQ_MAX_RETRIES, backoff, err
+                    );
+                    sleep(Duration::from_millis(backoff));
                 }
             }
-            let backoff = UPLOAD_REQ_BACKOFF_BASE_MS * attempt as u64;
-            sleep(Duration::from_millis(backoff));
         }
+    }
+
+    fn upload_json<T>(&self, label: &str, path: &str, params: &[(String, String)]) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        let resp = self.upload_get(path, params)?;
+        let status = resp.status();
+        let text = resp.text().with_context(|| format!("read {label} body"))?;
+        if !status.is_success() {
+            return Err(anyhow!(
+                "{} http error {} body: {}",
+                label,
+                status,
+                snippet(&text)
+            ));
+        }
+        let value: serde_json::Value = serde_json::from_str(&text)
+            .with_context(|| format!("decode {label} json body: {}", snippet(&text)))?;
+        if let Some(code) = value.get("code").and_then(|v| v.as_str()) {
+            if is_retryable_upload_code(code) {
+                return Err(anyhow!("{} transient code: {}", label, code));
+            }
+        }
+        serde_json::from_value(value)
+            .with_context(|| format!("decode {label} body: {}", snippet(&text)))
     }
 
     fn apply_signature(
@@ -1681,6 +1725,45 @@ fn is_retryable_dir_error(err: &anyhow::Error) -> bool {
     .any(|needle| msg.contains(needle))
 }
 
+fn is_retryable_upload_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+    is_retryable_dir_error(err)
+        || [
+            "decode init upload json",
+            "decode init upload body",
+            "decode upload urls json",
+            "decode upload urls body",
+            "decode commit upload json",
+            "decode commit upload body",
+            "eof while parsing",
+            "expected value",
+            "transient code",
+        ]
+        .iter()
+        .any(|needle| msg.contains(needle))
+}
+
+fn is_retryable_upload_code(code: &str) -> bool {
+    let code = code.trim().to_ascii_lowercase();
+    [
+        "system busy",
+        "server busy",
+        "service unavailable",
+        "too many requests",
+        "internal server error",
+        "bad gateway",
+        "gateway timeout",
+        "incomplete upload",
+        "500",
+        "502",
+        "503",
+        "504",
+        "429",
+    ]
+    .iter()
+    .any(|needle| code.contains(needle))
+}
+
 fn snippet(text: &str) -> String {
     let trimmed = text.trim();
     let max = 200;
@@ -1784,8 +1867,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        is_retryable_commit_code, is_retryable_dir_error, is_session_related_error,
-        is_success_code, parse_list_files_text,
+        is_retryable_commit_code, is_retryable_dir_error, is_retryable_upload_code,
+        is_retryable_upload_error, is_session_related_error, is_success_code,
+        parse_list_files_text,
     };
     use anyhow::anyhow;
 
@@ -1839,5 +1923,25 @@ mod tests {
         assert!(!is_retryable_dir_error(&anyhow!(
             "create folder error (res_code 12): parent folder not found"
         )));
+    }
+
+    #[test]
+    fn retryable_upload_error_matches_transient_decode_failures() {
+        assert!(is_retryable_upload_error(&anyhow!(
+            "decode init upload json body: <html>503</html>"
+        )));
+        assert!(is_retryable_upload_error(&anyhow!(
+            "init upload transient code: system busy"
+        )));
+        assert!(!is_retryable_upload_error(&anyhow!(
+            "init upload error: file name invalid"
+        )));
+    }
+
+    #[test]
+    fn retryable_upload_code_matches_server_busy_codes() {
+        assert!(is_retryable_upload_code("system busy"));
+        assert!(is_retryable_upload_code("503"));
+        assert!(!is_retryable_upload_code("FileAlreadyExists"));
     }
 }
