@@ -32,7 +32,7 @@ jobs:
         run: |
           set -e
           APP_DIR="spider-cloud-rs-${{ github.ref_name }}-${{ matrix.os }}"
-          mkdir -p "$APP_DIR/models"
+          mkdir -p "$APP_DIR"
 
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             cp target/release/backup-to-cloud.exe "$APP_DIR/"
@@ -49,8 +49,6 @@ jobs:
           cp backup.toml.example "$APP_DIR/"
           cp cfmmc.toml.example "$APP_DIR/"
           cp cloud-uploader.toml.example "$APP_DIR/"
-          cp models/model.onnx "$APP_DIR/models/"
-          cp models/vocab.txt "$APP_DIR/models/"
 
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             7z a "$ARCHIVE_NAME" "./$APP_DIR"
