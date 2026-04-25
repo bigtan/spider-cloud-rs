@@ -40,6 +40,14 @@ pub struct PushgoConfig {
     pub image: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct BaiduOcrConfig {
+    pub api_key: String,
+    pub secret_key: String,
+    #[serde(default = "default_baidu_ocr_url")]
+    pub url: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct NotifierConfig {
     #[serde(default)]
@@ -54,10 +62,7 @@ pub struct NotifierConfig {
 pub struct Config {
     #[serde(default)]
     pub debug: bool,
-    #[serde(default = "default_model_path")]
-    pub captcha_model_path: String,
-    #[serde(default = "default_vocab_path")]
-    pub captcha_vocab_path: String,
+    pub baidu_ocr: BaiduOcrConfig,
     pub account: AccountConfig,
     #[serde(default)]
     pub notifier: NotifierConfig,
@@ -99,6 +104,16 @@ impl Default for PushgoConfig {
     }
 }
 
+impl Default for BaiduOcrConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            secret_key: String::new(),
+            url: default_baidu_ocr_url(),
+        }
+    }
+}
+
 pub fn load_config(path: &str) -> Option<Config> {
     debug!("Reading CFMMC configuration from TOML: {}", path);
 
@@ -136,18 +151,14 @@ pub fn load_config(path: &str) -> Option<Config> {
     Some(config)
 }
 
-fn default_model_path() -> String {
-    "models/model.onnx".to_string()
-}
-
-fn default_vocab_path() -> String {
-    "models/vocab.txt".to_string()
-}
-
 fn default_chanify_url() -> String {
     "https://chanify.estan.cn/v1/sender/".to_string()
 }
 
 fn default_pushgo_url() -> String {
     "https://pushgo.estan.cn/message".to_string()
+}
+
+fn default_baidu_ocr_url() -> String {
+    "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic".to_string()
 }

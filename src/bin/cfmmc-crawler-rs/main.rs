@@ -9,7 +9,7 @@ mod env_config;
 mod notifier;
 mod xls_parser;
 
-use captcha::recognizer::DamoCaptchaRecognizer;
+use captcha::recognizer::{BaiduOcrCaptchaRecognizer, BaiduOcrOptions};
 use cfmmc::CFMMCCollector;
 use env_config::load_config;
 use notifier::{ChanifyNotifier, Notifier, PushgoNotifier, QQEmailNotifier};
@@ -43,6 +43,7 @@ fn main() {
     info!("CFMMC Crawler started");
 
     let account_config = config.account;
+    let baidu_ocr_config = config.baidu_ocr;
     let notifier_config = config.notifier;
     info!(
         "Notifier config loaded: Chanify={}, Email={}, Pushgo={}",
@@ -110,10 +111,13 @@ fn main() {
 
     // 初始化验证码识别器
     info!("Initializing CAPTCHA recognizer");
-    let model_path = config.captcha_model_path;
-    let vocab_path = config.captcha_vocab_path;
 
-    let mut recognizer = match DamoCaptchaRecognizer::new(&model_path, &vocab_path, debug) {
+    let mut recognizer = match BaiduOcrCaptchaRecognizer::new(BaiduOcrOptions {
+        api_key: baidu_ocr_config.api_key,
+        secret_key: baidu_ocr_config.secret_key,
+        ocr_url: baidu_ocr_config.url,
+        debug,
+    }) {
         Ok(r) => {
             info!("CAPTCHA recognizer initialized successfully");
             r
