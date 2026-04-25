@@ -3,8 +3,11 @@
 # ====================
 
 debug = false
-captcha_model_path = "models/model.onnx"
-captcha_vocab_path = "models/vocab.txt"
+
+[baidu_ocr]
+api_key = "your_baidu_ocr_api_key"
+secret_key = "your_baidu_ocr_secret_key"
+url = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic"
 
 # ====================
 # 账户配置
