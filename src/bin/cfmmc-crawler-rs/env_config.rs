@@ -18,6 +18,7 @@ pub struct ChanifyConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[derive(Default)]
 pub struct EmailConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -78,16 +79,6 @@ impl Default for ChanifyConfig {
     }
 }
 
-impl Default for EmailConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            sender: None,
-            password: None,
-            recipient: None,
-        }
-    }
-}
 
 impl Default for PushgoConfig {
     fn default() -> Self {

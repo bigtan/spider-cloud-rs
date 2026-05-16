@@ -1330,11 +1330,10 @@ impl Cloud189Client {
         }
         let value: serde_json::Value = serde_json::from_str(&text)
             .with_context(|| format!("decode {label} json body: {}", snippet(&text)))?;
-        if let Some(code) = value.get("code").and_then(|v| v.as_str()) {
-            if is_retryable_upload_code(code) {
+        if let Some(code) = value.get("code").and_then(|v| v.as_str())
+            && is_retryable_upload_code(code) {
                 return Err(anyhow!("{} transient code: {}", label, code));
             }
-        }
         serde_json::from_value(value)
             .with_context(|| format!("decode {label} body: {}", snippet(&text)))
     }
@@ -1437,7 +1436,7 @@ fn aes_ecb_hex(data: &[u8], secret: &str) -> Result<String> {
     let cipher = Aes128::new_from_slice(key).context("init aes")?;
     let mut buf = data.to_vec();
     let pad = 16 - (buf.len() % 16);
-    buf.extend(std::iter::repeat(pad as u8).take(pad));
+    buf.extend(std::iter::repeat_n(pad as u8, pad));
     for chunk in buf.chunks_mut(16) {
         let block = <&mut Block<Aes128>>::try_from(chunk).expect("aes block size");
         cipher.encrypt_block(block);
@@ -1622,8 +1621,8 @@ fn api_error(value: &serde_json::Value) -> Option<ApiError> {
         }
     }
 
-    if let Some(code) = value.get("code").and_then(|v| v.as_str()) {
-        if !code.is_empty() && code != "SUCCESS" {
+    if let Some(code) = value.get("code").and_then(|v| v.as_str())
+        && !code.is_empty() && code != "SUCCESS" {
             let msg = value
                 .get("msg")
                 .and_then(|v| v.as_str())
@@ -1634,10 +1633,9 @@ fn api_error(value: &serde_json::Value) -> Option<ApiError> {
                 message: msg.to_string(),
             });
         }
-    }
 
-    if let Some(code) = value.get("errorCode").and_then(|v| v.as_str()) {
-        if !code.is_empty() {
+    if let Some(code) = value.get("errorCode").and_then(|v| v.as_str())
+        && !code.is_empty() {
             let msg = value
                 .get("errorMsg")
                 .and_then(|v| v.as_str())
@@ -1647,16 +1645,14 @@ fn api_error(value: &serde_json::Value) -> Option<ApiError> {
                 message: msg.to_string(),
             });
         }
-    }
 
-    if let Some(err) = value.get("error").and_then(|v| v.as_str()) {
-        if !err.is_empty() {
+    if let Some(err) = value.get("error").and_then(|v| v.as_str())
+        && !err.is_empty() {
             return Some(ApiError {
                 code: "error".to_string(),
                 message: err.to_string(),
             });
         }
-    }
 
     None
 }

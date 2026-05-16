@@ -51,16 +51,12 @@ impl EmailNotifier {
         let to: Mailbox = self.recipient.parse().map_err(|err| {
             anyhow::anyhow!("invalid EMAIL_RECIPIENT '{}': {err}", self.recipient)
         })?;
-        let email = match Message::builder()
+        let email = Message::builder()
             .from(from)
             .to(to)
             .subject(subject)
             .header(ContentType::TEXT_HTML)
-            .body(html_body.to_string())
-        {
-            Ok(email) => email,
-            Err(e) => return Err(e.into()),
-        };
+            .body(html_body.to_string())?;
 
         let creds = Credentials::new(self.sender.clone(), self.password.clone());
 
@@ -97,16 +93,12 @@ impl Notifier for EmailNotifier {
         let to: Mailbox = self.recipient.parse().map_err(|err| {
             anyhow::anyhow!("invalid EMAIL_RECIPIENT '{}': {err}", self.recipient)
         })?;
-        let email = match Message::builder()
+        let email = Message::builder()
             .from(from)
             .to(to)
             .subject(subject)
             .header(ContentType::TEXT_PLAIN)
-            .body(message.to_string())
-        {
-            Ok(email) => email,
-            Err(e) => return Err(e.into()),
-        };
+            .body(message.to_string())?;
 
         let creds = Credentials::new(self.sender.clone(), self.password.clone());
 

@@ -89,11 +89,10 @@ impl Notifier for PushgoNotifier {
         let mut source_data = Map::new();
         source_data.insert("title".to_string(), Value::String(pushgo_title.clone()));
         source_data.insert("body".to_string(), Value::String(markdown_body));
-        if let Some(icon) = &self.icon {
-            if !icon.is_empty() {
+        if let Some(icon) = &self.icon
+            && !icon.is_empty() {
                 source_data.insert("icon".to_string(), Value::String(icon.clone()));
             }
-        }
         if let Some(image) = &self.image
             && !image.is_empty()
         {
