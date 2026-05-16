@@ -1331,9 +1331,10 @@ impl Cloud189Client {
         let value: serde_json::Value = serde_json::from_str(&text)
             .with_context(|| format!("decode {label} json body: {}", snippet(&text)))?;
         if let Some(code) = value.get("code").and_then(|v| v.as_str())
-            && is_retryable_upload_code(code) {
-                return Err(anyhow!("{} transient code: {}", label, code));
-            }
+            && is_retryable_upload_code(code)
+        {
+            return Err(anyhow!("{} transient code: {}", label, code));
+        }
         serde_json::from_value(value)
             .with_context(|| format!("decode {label} body: {}", snippet(&text)))
     }
@@ -1622,37 +1623,41 @@ fn api_error(value: &serde_json::Value) -> Option<ApiError> {
     }
 
     if let Some(code) = value.get("code").and_then(|v| v.as_str())
-        && !code.is_empty() && code != "SUCCESS" {
-            let msg = value
-                .get("msg")
-                .and_then(|v| v.as_str())
-                .or_else(|| value.get("message").and_then(|v| v.as_str()))
-                .unwrap_or("unknown error");
-            return Some(ApiError {
-                code: code.to_string(),
-                message: msg.to_string(),
-            });
-        }
+        && !code.is_empty()
+        && code != "SUCCESS"
+    {
+        let msg = value
+            .get("msg")
+            .and_then(|v| v.as_str())
+            .or_else(|| value.get("message").and_then(|v| v.as_str()))
+            .unwrap_or("unknown error");
+        return Some(ApiError {
+            code: code.to_string(),
+            message: msg.to_string(),
+        });
+    }
 
     if let Some(code) = value.get("errorCode").and_then(|v| v.as_str())
-        && !code.is_empty() {
-            let msg = value
-                .get("errorMsg")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Some(ApiError {
-                code: code.to_string(),
-                message: msg.to_string(),
-            });
-        }
+        && !code.is_empty()
+    {
+        let msg = value
+            .get("errorMsg")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        return Some(ApiError {
+            code: code.to_string(),
+            message: msg.to_string(),
+        });
+    }
 
     if let Some(err) = value.get("error").and_then(|v| v.as_str())
-        && !err.is_empty() {
-            return Some(ApiError {
-                code: "error".to_string(),
-                message: err.to_string(),
-            });
-        }
+        && !err.is_empty()
+    {
+        return Some(ApiError {
+            code: "error".to_string(),
+            message: err.to_string(),
+        });
+    }
 
     None
 }

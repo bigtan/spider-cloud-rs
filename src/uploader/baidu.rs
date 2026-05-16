@@ -252,8 +252,7 @@ impl BaiduPanUploader {
             self.refresh_access_token()?;
         }
 
-        self
-            .token_data
+        self.token_data
             .as_ref()
             .map(|t| t.access_token.clone())
             .context("No access token available")

@@ -17,8 +17,7 @@ pub struct ChanifyConfig {
     pub url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct EmailConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -78,7 +77,6 @@ impl Default for ChanifyConfig {
         }
     }
 }
-
 
 impl Default for PushgoConfig {
     fn default() -> Self {
