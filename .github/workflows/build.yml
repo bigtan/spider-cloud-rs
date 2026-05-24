@@ -30,8 +30,7 @@ jobs:
         with:
           command: build
           profile: release
-          targets: x86_64-unknown-linux-gnu
-          glibc-version: "2.39"
+          targets: x86_64-unknown-linux-musl
           args: --bins
       - name: Build Windows binaries
         if: matrix.os == 'windows-latest'
@@ -42,11 +41,11 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
         with:
-          name: spider-cloud-rs-x86_64-unknown-linux-gnu-glibc-2.39
+          name: spider-cloud-rs-x86_64-unknown-linux-musl
           path: |
-            target/x86_64-unknown-linux-gnu/release/backup-to-cloud
-            target/x86_64-unknown-linux-gnu/release/cfmmc-crawler-rs
-            target/x86_64-unknown-linux-gnu/release/cloud-uploader-rs
+            target/x86_64-unknown-linux-musl/release/backup-to-cloud
+            target/x86_64-unknown-linux-musl/release/cfmmc-crawler-rs
+            target/x86_64-unknown-linux-musl/release/cloud-uploader-rs
           retention-days: 7
       - name: Upload Windows build artifacts
         if: matrix.os == 'windows-latest'
