@@ -58,6 +58,7 @@ pushgo_image = ""
 baidu_enabled = false
 baidu_app_key = ""
 baidu_app_secret = ""
+baidu_config_path = ""
 baidu_archive_upload_path = ""
 baidu_files_upload_path = ""
 

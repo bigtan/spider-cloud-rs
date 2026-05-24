@@ -65,7 +65,7 @@ impl UploadManagerWrapper {
                         uploader: Box::new(BaiduPanUploader::new(
                             app_key.clone(),
                             app_secret.clone(),
-                            None,
+                            config.baidu_config_path.as_ref().map(PathBuf::from),
                         )?),
                         archive_dest: baidu_archive_dest,
                         files_dest: baidu_files_dest,

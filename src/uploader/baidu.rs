@@ -84,9 +84,9 @@ impl BaiduPanUploader {
     pub fn new(app_key: String, app_secret: String, config_file: Option<PathBuf>) -> Result<Self> {
         let config_file = config_file.unwrap_or_else(|| {
             let home_dir = dirs::home_dir().expect("Failed to get home directory");
-            let config_dir = home_dir.join(".baidu");
+            let config_dir = home_dir.join(".config").join("spider-cloud").join("baidu");
             std::fs::create_dir_all(&config_dir).ok();
-            config_dir.join("baidu_pan_config.json")
+            config_dir.join("config.json")
         });
 
         let mut uploader = Self {
@@ -162,6 +162,9 @@ impl BaiduPanUploader {
         };
 
         let json = serde_json::to_string_pretty(&token_data)?;
+        if let Some(parent) = self.config_file.parent() {
+            std::fs::create_dir_all(parent).context("Failed to create config directory")?;
+        }
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)

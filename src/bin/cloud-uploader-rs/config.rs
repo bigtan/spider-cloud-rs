@@ -36,6 +36,7 @@ pub struct Config {
     pub baidu_enabled: bool,
     pub baidu_app_key: Option<String>,
     pub baidu_app_secret: Option<String>,
+    pub baidu_config_path: Option<String>,
     pub baidu_archive_upload_path: Option<String>,
     pub baidu_files_upload_path: Option<String>,
     pub cloud189_enabled: bool,
@@ -97,6 +98,7 @@ struct RawConfig {
     baidu_enabled: Option<bool>,
     baidu_app_key: Option<String>,
     baidu_app_secret: Option<String>,
+    baidu_config_path: Option<String>,
     baidu_archive_upload_path: Option<String>,
     baidu_files_upload_path: Option<String>,
     cloud189_enabled: Option<bool>,
@@ -177,6 +179,7 @@ impl Config {
         let baidu_enabled = raw.baidu_enabled.unwrap_or(false);
         let baidu_app_key = raw.baidu_app_key;
         let baidu_app_secret = raw.baidu_app_secret;
+        let baidu_config_path = raw.baidu_config_path;
         let baidu_archive_upload_path = raw.baidu_archive_upload_path.map(|p| {
             let p = replace_date_placeholder(&p, &date);
             replace_server_location_placeholder(&p, &server_location)
@@ -231,6 +234,7 @@ impl Config {
             baidu_enabled,
             baidu_app_key,
             baidu_app_secret,
+            baidu_config_path,
             baidu_archive_upload_path,
             baidu_files_upload_path,
             cloud189_enabled,

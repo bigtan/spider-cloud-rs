@@ -6,10 +6,10 @@
 baidu_enabled = true
 baidu_app_key = "your_baidu_app_key"
 baidu_app_secret = "your_baidu_app_secret"
-# baidu_config = "/path/to/baidu_pan_config.json"
+# baidu_config_path = "/home/user/.config/spider-cloud/baidu/config.json"
 
 cloud189_enabled = true
-# cloud189_config = "/path/to/cloud189/config.json"
+# cloud189_config_path = "/home/user/.config/spider-cloud/cloud189/config.json"
 # cloud189_username = "your_cloud189_username"
 # cloud189_password = "your_cloud189_password"
 cloud189_use_qr = true

@@ -427,7 +427,10 @@ struct FileHashes {
 
 fn default_config_path() -> PathBuf {
     let home = dirs::home_dir().expect("home dir");
-    home.join(".config").join("cloud189").join("config.json")
+    home.join(".config")
+        .join("spider-cloud")
+        .join("cloud189")
+        .join("config.json")
 }
 
 fn load_config(path: &Path) -> Result<Cloud189Config> {

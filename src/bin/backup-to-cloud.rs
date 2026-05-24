@@ -23,10 +23,10 @@ struct AppConfig {
     baidu_app_key: Option<String>,
     #[serde(alias = "app_secret")]
     baidu_app_secret: Option<String>,
-    baidu_config: Option<String>,
+    baidu_config_path: Option<String>,
     #[serde(default)]
     cloud189_enabled: Option<bool>,
-    cloud189_config: Option<String>,
+    cloud189_config_path: Option<String>,
     cloud189_username: Option<String>,
     cloud189_password: Option<String>,
     cloud189_use_qr: Option<bool>,
@@ -58,15 +58,15 @@ fn main() -> Result<()> {
         baidu_enabled,
         baidu_app_key,
         baidu_app_secret,
-        baidu_config,
+        baidu_config_path,
         cloud189_enabled,
-        cloud189_config,
+        cloud189_config_path,
         cloud189_username,
         cloud189_password,
         cloud189_use_qr,
     } = config.app;
-    let baidu_config = baidu_config.map(PathBuf::from);
-    let cloud189_config = cloud189_config.map(PathBuf::from);
+    let baidu_config_path = baidu_config_path.map(PathBuf::from);
+    let cloud189_config_path = cloud189_config_path.map(PathBuf::from);
 
     let has_baidu_key = baidu_app_key
         .as_deref()
@@ -83,10 +83,11 @@ fn main() -> Result<()> {
     let baidu_uploader = if baidu_enabled {
         let app_key = baidu_app_key.context("Missing baidu_app_key (or app_key)")?;
         let app_secret = baidu_app_secret.context("Missing baidu_app_secret (or app_secret)")?;
-        Some(
-            Box::new(BaiduPanUploader::new(app_key, app_secret, baidu_config)?)
-                as Box<dyn Uploader>,
-        )
+        Some(Box::new(BaiduPanUploader::new(
+            app_key,
+            app_secret,
+            baidu_config_path,
+        )?) as Box<dyn Uploader>)
     } else {
         None
     };
@@ -116,7 +117,7 @@ fn main() -> Result<()> {
             }
         }
         Some(Box::new(Cloud189Uploader::new(
-            cloud189_config,
+            cloud189_config_path,
             username,
             password,
             use_qr,
