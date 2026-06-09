@@ -24,14 +24,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
-      - name: Cross build Linux binaries
+      - name: Build Linux binaries
         if: matrix.os == 'ubuntu-latest'
-        uses: zijiren233/cargo-cross@v1
-        with:
-          command: build
-          profile: release
-          targets: x86_64-unknown-linux-musl
-          args: --bins
+        run: cargo build --release --bins
       - name: Build Windows binaries
         if: matrix.os == 'windows-latest'
         run: cargo build --release --bins
@@ -41,11 +36,11 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
         with:
-          name: spider-cloud-rs-x86_64-unknown-linux-musl
+          name: spider-cloud-rs-x86_64-unknown-linux-gnu
           path: |
-            target/x86_64-unknown-linux-musl/release/backup-to-cloud
-            target/x86_64-unknown-linux-musl/release/cfmmc-crawler-rs
-            target/x86_64-unknown-linux-musl/release/cloud-uploader-rs
+            target/release/backup-to-cloud
+            target/release/cfmmc-crawler-rs
+            target/release/cloud-uploader-rs
           retention-days: 7
       - name: Upload Windows build artifacts
         if: matrix.os == 'windows-latest'

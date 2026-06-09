@@ -25,14 +25,9 @@ jobs:
           toolchain: stable
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
-      - name: Cross build Linux binaries
+      - name: Build Linux binaries
         if: matrix.os == 'ubuntu-latest'
-        uses: zijiren233/cargo-cross@v1
-        with:
-          command: build
-          profile: release
-          targets: x86_64-unknown-linux-musl
-          args: --bins
+        run: cargo build --release --bins
       - name: Build Windows binaries
         if: matrix.os == 'windows-latest'
         run: cargo build --release --bins
@@ -43,7 +38,7 @@ jobs:
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             APP_DIR="spider-cloud-rs-${{ github.ref_name }}-windows-latest"
           else
-            APP_DIR="spider-cloud-rs-${{ github.ref_name }}-x86_64-unknown-linux-musl"
+            APP_DIR="spider-cloud-rs-${{ github.ref_name }}-x86_64-unknown-linux-gnu"
           fi
           mkdir -p "$APP_DIR"
 
@@ -53,9 +48,9 @@ jobs:
             cp target/release/cloud-uploader-rs.exe "$APP_DIR/"
             ARCHIVE_NAME="$APP_DIR.zip"
           else
-            cp target/x86_64-unknown-linux-musl/release/backup-to-cloud "$APP_DIR/"
-            cp target/x86_64-unknown-linux-musl/release/cfmmc-crawler-rs "$APP_DIR/"
-            cp target/x86_64-unknown-linux-musl/release/cloud-uploader-rs "$APP_DIR/"
+            cp target/release/backup-to-cloud "$APP_DIR/"
+            cp target/release/cfmmc-crawler-rs "$APP_DIR/"
+            cp target/release/cloud-uploader-rs "$APP_DIR/"
             ARCHIVE_NAME="$APP_DIR.tar.gz"
           fi
 
