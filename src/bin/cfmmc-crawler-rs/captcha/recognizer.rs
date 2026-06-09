@@ -1,8 +1,12 @@
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use image::{RgbImage, imageops::FilterType};
+use ndarray::Array4;
+use ort::{session::Session, value::TensorRef};
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 use url::Url;
@@ -10,6 +14,12 @@ use url::Url;
 const TOKEN_URL: &str = "https://aip.baidubce.com/oauth/2.0/token";
 const DEFAULT_OCR_URL: &str = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic";
 const TOKEN_EXPIRY_SKEW: Duration = Duration::from_secs(300);
+const MASK_HEIGHT: usize = 32;
+const MASK_WIDTH: usize = 804;
+const CHUNK_WIDTH: usize = 300;
+const CHUNK_STRIDE: usize = 252;
+const CHUNK_COUNT: usize = 3;
+const CHANNELS: usize = 3;
 
 pub trait CaptchaRecognizer {
     fn recognize(&mut self, image_bytes: &[u8]) -> Result<String>;
@@ -27,6 +37,26 @@ pub struct BaiduOcrCaptchaRecognizer {
     client: Client,
     options: BaiduOcrOptions,
     token: Option<CachedToken>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OnnxCaptchaOptions {
+    pub model_path: PathBuf,
+    pub vocab_path: PathBuf,
+    pub captcha_length: usize,
+    pub debug: bool,
+}
+
+pub struct OnnxCaptchaRecognizer {
+    session: Session,
+    vocab: Vec<String>,
+    options: OnnxCaptchaOptions,
+}
+
+pub struct FallbackCaptchaRecognizer {
+    primary: Box<dyn CaptchaRecognizer>,
+    fallback: Box<dyn CaptchaRecognizer>,
+    expected_len: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +192,124 @@ impl BaiduOcrCaptchaRecognizer {
     }
 }
 
+impl OnnxCaptchaRecognizer {
+    pub fn new(options: OnnxCaptchaOptions) -> Result<Self> {
+        if options.captcha_length == 0 {
+            bail!("ONNX CAPTCHA length must be greater than zero");
+        }
+
+        let session = Session::builder()
+            .context("Failed to create ONNX Runtime session builder")?
+            .commit_from_file(&options.model_path)
+            .with_context(|| {
+                format!(
+                    "Failed to load ONNX CAPTCHA model from {}",
+                    options.model_path.display()
+                )
+            })?;
+        let vocab = load_vocab(&options.vocab_path)?;
+
+        info!(
+            "ONNX CAPTCHA recognizer initialized with model: {}",
+            options.model_path.display()
+        );
+        Ok(Self {
+            session,
+            vocab,
+            options,
+        })
+    }
+}
+
+impl CaptchaRecognizer for OnnxCaptchaRecognizer {
+    fn recognize(&mut self, image_bytes: &[u8]) -> Result<String> {
+        debug!(
+            "Starting CAPTCHA recognition through local ONNX model, image size: {} bytes",
+            image_bytes.len()
+        );
+
+        if self.options.debug {
+            if let Err(err) = std::fs::write("debug_captcha_onnx.jpg", image_bytes) {
+                warn!("Failed to save debug ONNX CAPTCHA image: {}", err);
+            } else {
+                debug!("Debug ONNX CAPTCHA image saved to debug_captcha_onnx.jpg");
+            }
+        }
+
+        let input = preprocess_image(image_bytes)?;
+        let input_tensor = TensorRef::from_array_view(&input)
+            .context("Failed to create ONNX tensor for CAPTCHA image")?;
+        let outputs = self
+            .session
+            .run(ort::inputs![input_tensor])
+            .context("Failed to run ONNX CAPTCHA inference")?;
+        let (shape, probabilities) = outputs[0]
+            .try_extract_tensor::<f32>()
+            .context("Failed to extract ONNX CAPTCHA output tensor")?;
+        let dims = shape
+            .iter()
+            .map(|&dim| {
+                usize::try_from(dim)
+                    .map_err(|_| anyhow!("invalid negative output dimension: {dim}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if dims.len() != 3 {
+            bail!("expected ONNX output rank 3 [batch, length, classes], got {dims:?}");
+        }
+
+        let preds = argmax_predictions(&dims, probabilities)?;
+        let result = ctc_decode_captcha(&preds, &self.vocab, self.options.captcha_length);
+
+        if result.len() == self.options.captcha_length {
+            info!("ONNX CAPTCHA recognition successful: {}", result);
+        } else {
+            warn!(
+                "ONNX CAPTCHA recognition returned unexpected length: {} (expected {}): {}",
+                result.len(),
+                self.options.captcha_length,
+                result
+            );
+        }
+
+        Ok(result)
+    }
+}
+
+impl FallbackCaptchaRecognizer {
+    pub fn new(
+        primary: Box<dyn CaptchaRecognizer>,
+        fallback: Box<dyn CaptchaRecognizer>,
+        expected_len: usize,
+    ) -> Self {
+        Self {
+            primary,
+            fallback,
+            expected_len,
+        }
+    }
+}
+
+impl CaptchaRecognizer for FallbackCaptchaRecognizer {
+    fn recognize(&mut self, image_bytes: &[u8]) -> Result<String> {
+        match self.primary.recognize(image_bytes) {
+            Ok(result) if result.len() == self.expected_len => Ok(result),
+            Ok(result) => {
+                warn!(
+                    "Primary CAPTCHA recognizer returned invalid length {}: {}; trying fallback",
+                    result.len(),
+                    result
+                );
+                self.fallback.recognize(image_bytes)
+            }
+            Err(err) => {
+                warn!("Primary CAPTCHA recognizer failed: {err}; trying fallback");
+                self.fallback.recognize(image_bytes)
+            }
+        }
+    }
+}
+
 impl Default for BaiduOcrOptions {
     fn default() -> Self {
         Self {
@@ -227,6 +375,119 @@ impl CaptchaRecognizer for BaiduOcrCaptchaRecognizer {
 
         Ok(result)
     }
+}
+
+fn preprocess_image(image_bytes: &[u8]) -> Result<Array4<f32>> {
+    let img = image::load_from_memory(image_bytes)
+        .context("Failed to decode CAPTCHA image")?
+        .to_rgb8();
+    let resized = keep_ratio_resize(&img);
+
+    let mut data = Array4::<f32>::zeros((CHUNK_COUNT, CHANNELS, MASK_HEIGHT, CHUNK_WIDTH));
+    for chunk in 0..CHUNK_COUNT {
+        let left = CHUNK_STRIDE * chunk;
+        for y in 0..MASK_HEIGHT {
+            for x in 0..CHUNK_WIDTH {
+                let pixel = resized.get_pixel((left + x) as u32, y as u32).0;
+                data[[chunk, 0, y, x]] = f32::from(pixel[2]) / 255.0;
+                data[[chunk, 1, y, x]] = f32::from(pixel[1]) / 255.0;
+                data[[chunk, 2, y, x]] = f32::from(pixel[0]) / 255.0;
+            }
+        }
+    }
+
+    Ok(data)
+}
+
+fn keep_ratio_resize(img: &RgbImage) -> RgbImage {
+    let (width, height) = img.dimensions();
+    let cur_ratio = width as f32 / height as f32;
+    let max_ratio = MASK_WIDTH as f32 / MASK_HEIGHT as f32;
+    let target_width = if cur_ratio > max_ratio {
+        MASK_WIDTH
+    } else {
+        (MASK_HEIGHT as f32 * cur_ratio) as usize
+    }
+    .max(1);
+
+    let resized = image::imageops::resize(
+        img,
+        target_width as u32,
+        MASK_HEIGHT as u32,
+        FilterType::Triangle,
+    );
+
+    let mut canvas = RgbImage::new(MASK_WIDTH as u32, MASK_HEIGHT as u32);
+    for y in 0..MASK_HEIGHT as u32 {
+        for x in 0..target_width as u32 {
+            canvas.put_pixel(x, y, *resized.get_pixel(x, y));
+        }
+    }
+
+    canvas
+}
+
+fn load_vocab(path: &Path) -> Result<Vec<String>> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read ONNX CAPTCHA vocab from {}", path.display()))?;
+    let mut vocab = vec![String::new(), String::new()];
+    vocab.extend(content.lines().map(str::to_owned));
+    Ok(vocab)
+}
+
+fn argmax_predictions(dims: &[usize], probabilities: &[f32]) -> Result<Vec<Vec<usize>>> {
+    let batch = dims[0];
+    let length = dims[1];
+    let classes = dims[2];
+    if probabilities.len() != batch * length * classes {
+        bail!(
+            "ONNX output shape {:?} does not match tensor length {}",
+            dims,
+            probabilities.len()
+        );
+    }
+
+    let mut preds = vec![vec![0; length]; batch];
+    for b in 0..batch {
+        for t in 0..length {
+            let offset = (b * length + t) * classes;
+            let mut best_idx = 0;
+            let mut best_score = f32::NEG_INFINITY;
+            for cls in 0..classes {
+                let score = probabilities[offset + cls];
+                if score > best_score {
+                    best_score = score;
+                    best_idx = cls;
+                }
+            }
+            preds[b][t] = best_idx;
+        }
+    }
+
+    Ok(preds)
+}
+
+fn ctc_decode_captcha(preds: &[Vec<usize>], vocab: &[String], captcha_length: usize) -> String {
+    let mut decoded = String::new();
+    let Some(row) = preds.first() else {
+        return decoded;
+    };
+
+    let mut last = 0;
+    for &idx in row {
+        if idx != last && idx != 0 {
+            if let Some(token) = vocab.get(idx) {
+                for ch in token.chars().filter(char::is_ascii_alphanumeric) {
+                    if decoded.len() < captcha_length {
+                        decoded.push(ch);
+                    }
+                }
+            }
+        }
+        last = idx;
+    }
+
+    decoded
 }
 
 fn is_token_error(error_code: u64) -> bool {

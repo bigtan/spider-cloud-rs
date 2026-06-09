@@ -4,9 +4,19 @@
 
 debug = false
 
+[captcha]
+# Options: "onnx", "baidu", "onnx_then_baidu", "baidu_then_onnx"
+provider = "onnx"
+
+[onnx_captcha]
+model_path = "models/model.onnx"
+vocab_path = "models/vocab.txt"
+captcha_length = 6
+
 [baidu_ocr]
-api_key = "your_baidu_ocr_api_key"
-secret_key = "your_baidu_ocr_secret_key"
+# Required only when captcha.provider is "baidu", "onnx_then_baidu", or "baidu_then_onnx".
+api_key = ""
+secret_key = ""
 url = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic"
 
 # ====================
