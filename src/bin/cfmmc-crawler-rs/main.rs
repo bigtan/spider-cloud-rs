@@ -9,10 +9,15 @@ mod env_config;
 mod notifier;
 mod xls_parser;
 
-use captcha::recognizer::{BaiduOcrCaptchaRecognizer, BaiduOcrOptions};
+use anyhow::Result;
+use captcha::recognizer::{
+    BaiduOcrCaptchaRecognizer, BaiduOcrOptions, CaptchaRecognizer, FallbackCaptchaRecognizer,
+    OnnxCaptchaOptions, OnnxCaptchaRecognizer,
+};
 use cfmmc::CFMMCCollector;
-use env_config::load_config;
+use env_config::{BaiduOcrConfig, CaptchaProvider, OnnxCaptchaConfig, load_config};
 use notifier::{ChanifyNotifier, Notifier, PushgoNotifier, QQEmailNotifier};
+use std::path::PathBuf;
 use xls_parser::extract_daily_values;
 
 fn main() {
@@ -43,7 +48,9 @@ fn main() {
     info!("CFMMC Crawler started");
 
     let account_config = config.account;
+    let captcha_config = config.captcha;
     let baidu_ocr_config = config.baidu_ocr;
+    let onnx_captcha_config = config.onnx_captcha;
     let notifier_config = config.notifier;
     info!(
         "Notifier config loaded: Chanify={}, Email={}, Pushgo={}",
@@ -112,12 +119,12 @@ fn main() {
     // 初始化验证码识别器
     info!("Initializing CAPTCHA recognizer");
 
-    let mut recognizer = match BaiduOcrCaptchaRecognizer::new(BaiduOcrOptions {
-        api_key: baidu_ocr_config.api_key,
-        secret_key: baidu_ocr_config.secret_key,
-        ocr_url: baidu_ocr_config.url,
+    let mut recognizer = match build_captcha_recognizer(
+        captcha_config.provider,
+        baidu_ocr_config,
+        onnx_captcha_config,
         debug,
-    }) {
+    ) {
         Ok(r) => {
             info!("CAPTCHA recognizer initialized successfully");
             r
@@ -154,8 +161,12 @@ fn main() {
         if !std::path::Path::new(&xls_path).exists() {
             info!("Local file not found, downloading: {}", xls_path);
 
-            let mut collector =
-                CFMMCCollector::new(account.clone(), password.clone(), &mut recognizer, debug);
+            let mut collector = CFMMCCollector::new(
+                account.clone(),
+                password.clone(),
+                recognizer.as_mut(),
+                debug,
+            );
 
             if let Err(e) = collector.login() {
                 error!("Login failed for account {}: {}", account, e);
@@ -209,4 +220,61 @@ fn main() {
     }
 
     info!("CFMMC Crawler completed successfully");
+}
+
+fn build_captcha_recognizer(
+    provider: CaptchaProvider,
+    baidu_config: BaiduOcrConfig,
+    onnx_config: OnnxCaptchaConfig,
+    debug: bool,
+) -> Result<Box<dyn CaptchaRecognizer>> {
+    match provider {
+        CaptchaProvider::Baidu => {
+            info!("Using Baidu OCR CAPTCHA recognizer");
+            Ok(Box::new(build_baidu_recognizer(baidu_config, debug)?))
+        }
+        CaptchaProvider::Onnx => {
+            info!("Using local ONNX CAPTCHA recognizer");
+            Ok(Box::new(build_onnx_recognizer(onnx_config, debug)?))
+        }
+        CaptchaProvider::OnnxThenBaidu => {
+            info!("Using local ONNX CAPTCHA recognizer with Baidu OCR fallback");
+            let expected_len = onnx_config.captcha_length;
+            Ok(Box::new(FallbackCaptchaRecognizer::new(
+                Box::new(build_onnx_recognizer(onnx_config, debug)?),
+                Box::new(build_baidu_recognizer(baidu_config, debug)?),
+                expected_len,
+            )))
+        }
+        CaptchaProvider::BaiduThenOnnx => {
+            info!("Using Baidu OCR CAPTCHA recognizer with local ONNX fallback");
+            let expected_len = onnx_config.captcha_length;
+            Ok(Box::new(FallbackCaptchaRecognizer::new(
+                Box::new(build_baidu_recognizer(baidu_config, debug)?),
+                Box::new(build_onnx_recognizer(onnx_config, debug)?),
+                expected_len,
+            )))
+        }
+    }
+}
+
+fn build_baidu_recognizer(
+    config: BaiduOcrConfig,
+    debug: bool,
+) -> Result<BaiduOcrCaptchaRecognizer> {
+    BaiduOcrCaptchaRecognizer::new(BaiduOcrOptions {
+        api_key: config.api_key,
+        secret_key: config.secret_key,
+        ocr_url: config.url,
+        debug,
+    })
+}
+
+fn build_onnx_recognizer(config: OnnxCaptchaConfig, debug: bool) -> Result<OnnxCaptchaRecognizer> {
+    OnnxCaptchaRecognizer::new(OnnxCaptchaOptions {
+        model_path: PathBuf::from(config.model_path),
+        vocab_path: PathBuf::from(config.vocab_path),
+        captcha_length: config.captcha_length,
+        debug,
+    })
 }

@@ -42,10 +42,37 @@ pub struct PushgoConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct BaiduOcrConfig {
+    #[serde(default)]
     pub api_key: String,
+    #[serde(default)]
     pub secret_key: String,
     #[serde(default = "default_baidu_ocr_url")]
     pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptchaProvider {
+    Baidu,
+    Onnx,
+    OnnxThenBaidu,
+    BaiduThenOnnx,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CaptchaConfig {
+    #[serde(default)]
+    pub provider: CaptchaProvider,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OnnxCaptchaConfig {
+    #[serde(default = "default_onnx_captcha_model_path")]
+    pub model_path: String,
+    #[serde(default = "default_onnx_captcha_vocab_path")]
+    pub vocab_path: String,
+    #[serde(default = "default_onnx_captcha_length")]
+    pub captcha_length: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -62,7 +89,12 @@ pub struct NotifierConfig {
 pub struct Config {
     #[serde(default)]
     pub debug: bool,
+    #[serde(default)]
+    pub captcha: CaptchaConfig,
+    #[serde(default)]
     pub baidu_ocr: BaiduOcrConfig,
+    #[serde(default)]
+    pub onnx_captcha: OnnxCaptchaConfig,
     pub account: AccountConfig,
     #[serde(default)]
     pub notifier: NotifierConfig,
@@ -99,6 +131,30 @@ impl Default for BaiduOcrConfig {
             api_key: String::new(),
             secret_key: String::new(),
             url: default_baidu_ocr_url(),
+        }
+    }
+}
+
+impl Default for CaptchaProvider {
+    fn default() -> Self {
+        Self::Baidu
+    }
+}
+
+impl Default for CaptchaConfig {
+    fn default() -> Self {
+        Self {
+            provider: CaptchaProvider::Baidu,
+        }
+    }
+}
+
+impl Default for OnnxCaptchaConfig {
+    fn default() -> Self {
+        Self {
+            model_path: default_onnx_captcha_model_path(),
+            vocab_path: default_onnx_captcha_vocab_path(),
+            captcha_length: default_onnx_captcha_length(),
         }
     }
 }
@@ -150,4 +206,16 @@ fn default_pushgo_url() -> String {
 
 fn default_baidu_ocr_url() -> String {
     "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic".to_string()
+}
+
+fn default_onnx_captcha_model_path() -> String {
+    "models/model.onnx".to_string()
+}
+
+fn default_onnx_captcha_vocab_path() -> String {
+    "models/vocab.txt".to_string()
+}
+
+fn default_onnx_captcha_length() -> usize {
+    6
 }

@@ -16,7 +16,7 @@ The repository currently contains three binaries:
 
 - Rust stable
 - network access during build/test
-- Baidu OCR API credentials for the CFMMC crawler CAPTCHA recognizer
+- local ONNX CAPTCHA model files for the CFMMC crawler, or Baidu OCR API credentials when using the Baidu fallback
 
 ## Project Layout
 
@@ -58,7 +58,19 @@ cargo run --release --bin cfmmc-crawler-rs -- cfmmc.toml
 
 Default config path is `config.toml` if no argument is provided.
 
-The CFMMC crawler uses Baidu OCR's HTTP API for CAPTCHA recognition. Configure `baidu_ocr.api_key` and `baidu_ocr.secret_key` in your TOML file. The crawler fetches and caches `access_token` automatically during each run.
+The CFMMC crawler can use a local ONNX CAPTCHA recognizer or Baidu OCR's HTTP API. Configure the recognizer in your TOML file:
+
+```toml
+[captcha]
+provider = "onnx" # onnx, baidu, onnx_then_baidu, baidu_then_onnx
+
+[onnx_captcha]
+model_path = "models/model.onnx"
+vocab_path = "models/vocab.txt"
+captcha_length = 6
+```
+
+If `provider` uses Baidu OCR, configure `baidu_ocr.api_key` and `baidu_ocr.secret_key`. The crawler fetches and caches `access_token` automatically during each run.
 
 ### Cloud uploader
 
@@ -88,5 +100,5 @@ Release notes are generated with `git-cliff` from `cliff.toml`.
 
 ## Notes
 
-- `cfmmc-crawler-rs` requires valid account credentials and Baidu OCR credentials
+- `cfmmc-crawler-rs` requires valid account credentials and either local ONNX CAPTCHA model files or Baidu OCR credentials
 - notification and cloud upload behavior depends entirely on the TOML config you provide

@@ -16,9 +16,12 @@ glob = "0.3"
 hex = "0.4"
 hmac = "0.13"
 httpdate = "1"
+image = "0.25"
 indexmap = "2.14"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
 md5 = "0.8"
+ndarray = "0.17"
+ort = "2.0.0-rc.12"
 quick-xml = { version = "0.40", features = ["serialize"] }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "multipart", "form", "cookies", "rustls"] }
