@@ -132,6 +132,21 @@ impl UploadResult {
     }
 }
 
+/// Read until `buf` is full or EOF. `Read::read` may return short reads even
+/// mid-file, which would silently desync fixed-size chunk boundaries.
+pub(crate) fn read_full(reader: &mut impl std::io::Read, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(filled)
+}
+
 fn expand_placeholders(template: &str, vars: &HashMap<String, String>) -> String {
     let mut output = String::with_capacity(template.len());
     let mut chars = template.chars().peekable();
@@ -206,6 +221,35 @@ mod tests {
                 anyhow::bail!("{} failed", self.name);
             }
         }
+    }
+
+    /// Reader that returns at most 3 bytes per read call to simulate short reads.
+    struct ShortReader {
+        data: Vec<u8>,
+        pos: usize,
+    }
+
+    impl std::io::Read for ShortReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = (self.data.len() - self.pos).min(buf.len()).min(3);
+            buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn read_full_fills_buffer_across_short_reads() {
+        let mut reader = ShortReader {
+            data: (0..10).collect(),
+            pos: 0,
+        };
+        let mut buf = [0u8; 8];
+        assert_eq!(read_full(&mut reader, &mut buf).unwrap(), 8);
+        assert_eq!(&buf, &[0, 1, 2, 3, 4, 5, 6, 7]);
+        let mut rest = [0u8; 8];
+        assert_eq!(read_full(&mut reader, &mut rest).unwrap(), 2);
+        assert_eq!(&rest[..2], &[8, 9]);
     }
 
     #[test]

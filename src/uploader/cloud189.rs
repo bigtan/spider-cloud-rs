@@ -29,7 +29,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::Result;
-use crate::uploader::Uploader;
+use crate::uploader::{Uploader, read_full};
 use urlencoding::decode as url_decode;
 
 const API_BASE: &str = "https://api.cloud.189.cn";
@@ -1504,7 +1504,7 @@ fn compute_hashes(path: &Path) -> Result<FileHashes> {
     let mut offset: u64 = 0;
     let mut buf = vec![0u8; SLICE_SIZE];
     loop {
-        let n = file.read(&mut buf)?;
+        let n = read_full(&mut file, &mut buf)?;
         if n == 0 {
             break;
         }

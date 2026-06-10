@@ -3,14 +3,14 @@ use chrono::{DateTime, Duration, Utc};
 use reqwest::blocking::{Client, multipart};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::Duration as StdDuration;
 use tracing::{debug, info, warn};
 
 use crate::Result;
-use crate::uploader::Uploader;
+use crate::uploader::{Uploader, read_full};
 
 const BASE_URL: &str = "https://pan.baidu.com/rest/2.0/xpan/";
 const OAUTH_URL: &str = "https://openapi.baidu.com/oauth/2.0/";
@@ -344,7 +344,7 @@ impl BaiduPanUploader {
         let mut buffer = vec![0u8; CHUNK_SIZE];
 
         loop {
-            let bytes_read = file.read(&mut buffer)?;
+            let bytes_read = read_full(&mut file, &mut buffer)?;
             if bytes_read == 0 {
                 break;
             }
@@ -413,29 +413,25 @@ impl BaiduPanUploader {
         let upload_server = self.get_upload_server(&access_token, &remote_full_path, &upload_id)?;
         info!("Upload server: {}", upload_server);
 
-        // 3. Upload chunks
-        let mut file = File::open(local_path)?;
-        let mut buffer = vec![0u8; CHUNK_SIZE];
-
-        for (i, _) in block_list.iter().enumerate() {
+        // 3. Upload chunks (streamed from disk to avoid buffering 4MB copies)
+        for i in 0..block_list.len() {
             info!("Uploading chunk {}/{}", i + 1, block_list.len());
 
-            let bytes_read = file.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break;
-            }
+            let offset = (i * CHUNK_SIZE) as u64;
+            let len = (file_size - offset).min(CHUNK_SIZE as u64);
 
             let upload_url = format!(
                 "{}/rest/2.0/pcs/superfile2?method=upload&access_token={}&type=tmpfile&path={}&uploadid={}&partseq={}",
                 upload_server, access_token, remote_full_path, upload_id, i
             );
 
-            let chunk_bytes = buffer[..bytes_read].to_vec();
-
             let mut attempt = 0;
             loop {
                 attempt += 1;
-                let part = multipart::Part::bytes(chunk_bytes.clone()).file_name("file");
+                let mut file = File::open(local_path)?;
+                file.seek(SeekFrom::Start(offset))?;
+                let part = multipart::Part::reader_with_length(file.take(len), len)
+                    .file_name("file");
                 let form = multipart::Form::new().part("file", part);
                 let response = self.client.post(&upload_url).multipart(form).send();
                 match response {
