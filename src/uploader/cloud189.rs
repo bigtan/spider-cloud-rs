@@ -50,6 +50,8 @@ const COMMIT_UPLOAD_MAX_RETRIES: u32 = 5;
 const COMMIT_UPLOAD_BACKOFF_BASE_MS: u64 = 1_000;
 const DIR_OP_MAX_RETRIES: u32 = 3;
 const DIR_OP_BACKOFF_BASE_MS: u64 = 1_000;
+const QR_LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+const QR_POLL_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Cloud189Config {
@@ -709,6 +711,7 @@ impl Cloud189Client {
             qr_url
         );
 
+        let deadline = std::time::Instant::now() + QR_LOGIN_TIMEOUT;
         loop {
             let state = self.query_qr_state(&qr, &app_conf, &referer)?;
             match state.status {
@@ -745,7 +748,13 @@ impl Cloud189Client {
                     return Err(anyhow!("unknown qr login status: {}", state.status));
                 }
             }
-            sleep(Duration::from_secs(3));
+            if std::time::Instant::now() >= deadline {
+                return Err(anyhow!(
+                    "QR code login timed out after {}s without confirmation",
+                    QR_LOGIN_TIMEOUT.as_secs()
+                ));
+            }
+            sleep(QR_POLL_INTERVAL);
         }
     }
 
