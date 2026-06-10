@@ -1774,7 +1774,12 @@ fn snippet(text: &str) -> String {
     if trimmed.len() <= max {
         trimmed.to_string()
     } else {
-        format!("{}...", &trimmed[..max])
+        // 截断点必须落在字符边界上，否则字节切片会 panic
+        let mut end = max;
+        while !trimmed.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &trimmed[..end])
     }
 }
 
@@ -1873,9 +1878,23 @@ mod tests {
     use super::{
         is_retryable_commit_code, is_retryable_dir_error, is_retryable_upload_code,
         is_retryable_upload_error, is_session_related_error, is_success_code,
-        parse_list_files_text,
+        parse_list_files_text, snippet,
     };
     use anyhow::anyhow;
+
+    #[test]
+    fn snippet_truncates_on_char_boundary() {
+        let long_ascii = "a".repeat(300);
+        assert_eq!(snippet(&long_ascii).len(), 203);
+
+        // 每个汉字 3 字节，第 200 字节不是字符边界，不应 panic
+        let long_chinese = "错".repeat(100);
+        let result = snippet(&long_chinese);
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= 203);
+
+        assert_eq!(snippet("  short  "), "short");
+    }
 
     #[test]
     fn success_code_accepts_zero_and_success() {
