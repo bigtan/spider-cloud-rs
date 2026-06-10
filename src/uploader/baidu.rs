@@ -2,15 +2,15 @@ use anyhow::Context;
 use chrono::{DateTime, Duration, Utc};
 use reqwest::blocking::{Client, multipart};
 use serde::{Deserialize, Serialize};
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::Duration as StdDuration;
 use tracing::{debug, info, warn};
 
 use crate::Result;
-use crate::uploader::{Uploader, read_full};
+use crate::uploader::{Uploader, read_full, write_private};
 
 const BASE_URL: &str = "https://pan.baidu.com/rest/2.0/xpan/";
 const OAUTH_URL: &str = "https://openapi.baidu.com/oauth/2.0/";
@@ -82,12 +82,15 @@ pub struct BaiduPanUploader {
 impl BaiduPanUploader {
     /// Create a new Baidu Pan uploader
     pub fn new(app_key: String, app_secret: String, config_file: Option<PathBuf>) -> Result<Self> {
-        let config_file = config_file.unwrap_or_else(|| {
-            let home_dir = dirs::home_dir().expect("Failed to get home directory");
-            let config_dir = home_dir.join(".config").join("spider-cloud").join("baidu");
-            std::fs::create_dir_all(&config_dir).ok();
-            config_dir.join("config.json")
-        });
+        let config_file = match config_file {
+            Some(path) => path,
+            None => dirs::home_dir()
+                .context("cannot determine home directory")?
+                .join(".config")
+                .join("spider-cloud")
+                .join("baidu")
+                .join("config.json"),
+        };
 
         let mut uploader = Self {
             app_key,
@@ -165,14 +168,7 @@ impl BaiduPanUploader {
         if let Some(parent) = self.config_file.parent() {
             std::fs::create_dir_all(parent).context("Failed to create config directory")?;
         }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&self.config_file)
-            .context("Failed to open config file for writing")?;
-
-        file.write_all(json.as_bytes())
+        write_private(&self.config_file, json.as_bytes())
             .context("Failed to write token data")?;
 
         self.token_data = Some(token_data);

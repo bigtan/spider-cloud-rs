@@ -23,3 +23,10 @@ target
 backup.toml
 cfmmc.toml
 cloud-uploader.toml
+
+# Default config name used by all binaries; may contain credentials
+config.toml
+
+# Runtime output: logs and downloaded settlement data
+logs/
+data/

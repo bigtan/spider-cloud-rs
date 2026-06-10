@@ -132,6 +132,27 @@ impl UploadResult {
     }
 }
 
+/// Write a credentials file with owner-only permissions on Unix; the default
+/// umask would otherwise leave session secrets world-readable.
+pub(crate) fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(data)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, data)
+    }
+}
+
 /// Read until `buf` is full or EOF. `Read::read` may return short reads even
 /// mid-file, which would silently desync fixed-size chunk boundaries.
 pub(crate) fn read_full(reader: &mut impl std::io::Read, buf: &mut [u8]) -> std::io::Result<usize> {

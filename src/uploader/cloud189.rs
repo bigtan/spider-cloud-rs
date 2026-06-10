@@ -29,7 +29,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::Result;
-use crate::uploader::{Uploader, read_full};
+use crate::uploader::{Uploader, read_full, write_private};
 use urlencoding::decode as url_decode;
 
 const API_BASE: &str = "https://api.cloud.189.cn";
@@ -117,7 +117,10 @@ impl Cloud189Uploader {
         password: Option<String>,
         use_qr: bool,
     ) -> Result<Self> {
-        let config_path = config_path.unwrap_or_else(default_config_path);
+        let config_path = match config_path {
+            Some(path) => path,
+            None => default_config_path()?,
+        };
         let mut config = load_config(&config_path)?;
         config.path = config_path.clone();
 
@@ -427,12 +430,13 @@ struct FileHashes {
     parts: Vec<PartInfo>,
 }
 
-fn default_config_path() -> PathBuf {
-    let home = dirs::home_dir().expect("home dir");
-    home.join(".config")
+fn default_config_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot determine home directory"))?;
+    Ok(home
+        .join(".config")
         .join("spider-cloud")
         .join("cloud189")
-        .join("config.json")
+        .join("config.json"))
 }
 
 fn load_config(path: &Path) -> Result<Cloud189Config> {
@@ -443,7 +447,16 @@ fn load_config(path: &Path) -> Result<Cloud189Config> {
         });
     }
     let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
-    let mut cfg: Cloud189Config = serde_json::from_slice(&data).unwrap_or_default();
+    let mut cfg: Cloud189Config = match serde_json::from_slice(&data) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            warn!(
+                "config file {} is invalid, starting with an empty config: {err}",
+                path.display()
+            );
+            Cloud189Config::default()
+        }
+    };
     cfg.path = path.to_path_buf();
     Ok(cfg)
 }
@@ -453,7 +466,8 @@ fn save_config(config: &Cloud189Config) -> Result<()> {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let data = serde_json::to_vec_pretty(config).context("serialize config")?;
-    fs::write(&config.path, data).with_context(|| format!("write {}", config.path.display()))
+    write_private(&config.path, &data)
+        .with_context(|| format!("write {}", config.path.display()))
 }
 
 impl Cloud189Client {
