@@ -42,7 +42,7 @@ fn main() -> Result<()> {
             let result = handle_archive_mode(&config, &mut upload_manager)?;
             notification_manager.send_upload_result(&config.server_location, &config.date, &result);
 
-            if !result.overall_success {
+            if has_failures(&result) {
                 anyhow::bail!("Archive upload failed");
             }
         }
@@ -57,7 +57,7 @@ fn main() -> Result<()> {
                 &merged_result,
             );
 
-            if !merged_result.overall_success {
+            if has_failures(&merged_result) {
                 anyhow::bail!("Some file uploads failed");
             }
         }
@@ -105,7 +105,7 @@ fn main() -> Result<()> {
                 &merged_result,
             );
 
-            if !merged_result.overall_success {
+            if has_failures(&merged_result) {
                 anyhow::bail!("Some uploads failed in hybrid mode");
             }
         }
@@ -138,12 +138,9 @@ fn handle_archive_mode(
             if config.require_archive {
                 anyhow::bail!("Archiving failed and is required: {}", e);
             } else {
-                warn!("Archiving failed but not required, skipping upload");
-                // Return empty result
-                return Ok(UploadResult::from_attempts(vec![UploadAttempt::failure(
-                    "Archive creation",
-                    e.to_string(),
-                )]));
+                // require_archive=false 时真正容忍：返回空结果，不计为失败
+                warn!("Archiving failed but not required, skipping archive upload");
+                return Ok(UploadResult::empty());
             }
         }
     }
@@ -247,6 +244,11 @@ fn upload_file(
 
     // Upload file
     upload_manager.upload_file(file_path, date_str, mode)
+}
+
+/// A result with no attempts (nothing to upload / archive skipped) is not a failure.
+fn has_failures(result: &UploadResult) -> bool {
+    result.attempts.iter().any(|attempt| !attempt.success)
 }
 
 /// Merge multiple upload results into one
