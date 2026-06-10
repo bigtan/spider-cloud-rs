@@ -105,6 +105,23 @@ impl Session {
     }
 }
 
+impl From<SessionResp> for Session {
+    fn from(resp: SessionResp) -> Self {
+        Self {
+            login_name: resp.login_name,
+            key: resp.key,
+            secret: resp.secret,
+            keep_alive: resp.keep_alive,
+            file_diff_span: resp.file_diff_span,
+            user_info_span: resp.user_info_span,
+            family_key: resp.family_key,
+            family_secret: resp.family_secret,
+            access_token: resp.access_token,
+            refresh_token: resp.refresh_token,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Cloud189Uploader {
     client: Cloud189Client,
@@ -643,19 +660,7 @@ impl Cloud189Client {
         self.config.sson = sson.clone();
 
         let session = self.fetch_session(&submit.to_url)?;
-        self.config.session = Some(Session {
-            login_name: session.login_name,
-            key: session.key,
-            secret: session.secret,
-            keep_alive: session.keep_alive,
-            file_diff_span: session.file_diff_span,
-            user_info_span: session.user_info_span,
-            family_key: session.family_key,
-            family_secret: session.family_secret,
-            access_token: session.access_token,
-            refresh_token: session.refresh_token,
-            ..Default::default()
-        });
+        self.config.session = Some(session.into());
         self.config.user = Some(User {
             name: username.to_string(),
             password: String::new(),
@@ -740,19 +745,7 @@ impl Cloud189Client {
                         self.config.sson = Some(sson);
                     }
                     let session = self.fetch_session(&state.redirect_url)?;
-                    self.config.session = Some(Session {
-                        login_name: session.login_name,
-                        key: session.key,
-                        secret: session.secret,
-                        keep_alive: session.keep_alive,
-                        file_diff_span: session.file_diff_span,
-                        user_info_span: session.user_info_span,
-                        family_key: session.family_key,
-                        family_secret: session.family_secret,
-                        access_token: session.access_token,
-                        refresh_token: session.refresh_token,
-                        ..Default::default()
-                    });
+                    self.config.session = Some(session.into());
                     save_config(&self.config)?;
                     info!("QR code login succeeded");
                     return Ok(());
@@ -912,58 +905,25 @@ impl Cloud189Client {
     }
 
     fn update_session(&mut self, session: SessionResp) {
-        let current = self.config.session.clone().unwrap_or_default();
+        fn pick(new: String, old: String) -> String {
+            if new.is_empty() { old } else { new }
+        }
+        fn pick_span(new: i64, old: i64) -> i64 {
+            if new == 0 { old } else { new }
+        }
+
+        let current = self.config.session.take().unwrap_or_default();
         let merged = Session {
-            login_name: if session.login_name.is_empty() {
-                current.login_name
-            } else {
-                session.login_name
-            },
-            key: if session.key.is_empty() {
-                current.key
-            } else {
-                session.key
-            },
-            secret: if session.secret.is_empty() {
-                current.secret
-            } else {
-                session.secret
-            },
-            keep_alive: if session.keep_alive == 0 {
-                current.keep_alive
-            } else {
-                session.keep_alive
-            },
-            file_diff_span: if session.file_diff_span == 0 {
-                current.file_diff_span
-            } else {
-                session.file_diff_span
-            },
-            user_info_span: if session.user_info_span == 0 {
-                current.user_info_span
-            } else {
-                session.user_info_span
-            },
-            family_key: if session.family_key.is_empty() {
-                current.family_key
-            } else {
-                session.family_key
-            },
-            family_secret: if session.family_secret.is_empty() {
-                current.family_secret
-            } else {
-                session.family_secret
-            },
-            access_token: if session.access_token.is_empty() {
-                current.access_token
-            } else {
-                session.access_token
-            },
-            refresh_token: if session.refresh_token.is_empty() {
-                current.refresh_token
-            } else {
-                session.refresh_token
-            },
+            login_name: pick(session.login_name, current.login_name),
+            key: pick(session.key, current.key),
+            secret: pick(session.secret, current.secret),
+            keep_alive: pick_span(session.keep_alive, current.keep_alive),
+            file_diff_span: pick_span(session.file_diff_span, current.file_diff_span),
+            user_info_span: pick_span(session.user_info_span, current.user_info_span),
+            family_key: pick(session.family_key, current.family_key),
+            family_secret: pick(session.family_secret, current.family_secret),
+            access_token: pick(session.access_token, current.access_token),
+            refresh_token: pick(session.refresh_token, current.refresh_token),
         };
         self.config.session = Some(merged);
     }
@@ -1695,15 +1655,18 @@ fn is_user_invalid_token(err: &anyhow::Error) -> bool {
 
 fn is_session_related_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string().to_ascii_lowercase();
+    // 故意不用宽泛的 "token"/"login"：携带文件名或 URL 的普通错误
+    // 不应触发整个会话刷新流程
     [
         "userinvalidopentoken",
         "invalidsessionkey",
         "sessionkey",
         "access token",
-        "token",
+        "accesstoken",
+        "invalid token",
+        "invalidtoken",
         "signature",
         "sign error",
-        "login",
         "please login",
         "认证",
         "鉴权",
@@ -1943,6 +1906,13 @@ mod tests {
         )));
         assert!(!is_session_related_error(&anyhow!(
             "list files error (res_code 12): parent folder not found"
+        )));
+        // 含 "login"/"token" 子串但与会话无关的错误不应触发会话刷新
+        assert!(!is_session_related_error(&anyhow!(
+            "upload failed: file login.txt is broken"
+        )));
+        assert!(!is_session_related_error(&anyhow!(
+            "create folder error: name tokenizer rejected input"
         )));
     }
 
