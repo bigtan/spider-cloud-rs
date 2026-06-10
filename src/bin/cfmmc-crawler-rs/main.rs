@@ -200,13 +200,22 @@ fn run() -> Result<()> {
             );
         }
 
-        let (values, found_keys) = extract_daily_values(&xls_path, "客户交易结算日报");
-        info!("Extracted values for account {}: {:?}", account, values);
-
-        if found_keys > 0 {
-            any_settlement_found = true;
+        match extract_daily_values(&xls_path, "客户交易结算日报") {
+            Some((values, found_keys)) if found_keys > 0 => {
+                info!("Extracted values for account {}: {:?}", account, values);
+                any_settlement_found = true;
+                accounts_data.insert(account.clone(), Some(values));
+            }
+            Some(_) => {
+                info!("No settlement values found for account {}", account);
+                accounts_data.insert(account.clone(), None);
+            }
+            None => {
+                error!("Failed to extract values for account {}", account);
+                failures.push(format!("[{account}] failed to parse {xls_path}"));
+                accounts_data.insert(account.clone(), None);
+            }
         }
-        accounts_data.insert(account.clone(), values);
     }
 
     if any_settlement_found {
