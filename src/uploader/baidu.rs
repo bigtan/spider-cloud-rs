@@ -168,8 +168,7 @@ impl BaiduPanUploader {
         if let Some(parent) = self.config_file.parent() {
             std::fs::create_dir_all(parent).context("Failed to create config directory")?;
         }
-        write_private(&self.config_file, json.as_bytes())
-            .context("Failed to write token data")?;
+        write_private(&self.config_file, json.as_bytes()).context("Failed to write token data")?;
 
         self.token_data = Some(token_data);
         info!("Tokens saved successfully");
@@ -426,8 +425,8 @@ impl BaiduPanUploader {
                 attempt += 1;
                 let mut file = File::open(local_path)?;
                 file.seek(SeekFrom::Start(offset))?;
-                let part = multipart::Part::reader_with_length(file.take(len), len)
-                    .file_name("file");
+                let part =
+                    multipart::Part::reader_with_length(file.take(len), len).file_name("file");
                 let form = multipart::Form::new().part("file", part);
                 let response = self.client.post(&upload_url).multipart(form).send();
                 match response {

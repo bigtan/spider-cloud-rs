@@ -147,7 +147,10 @@ fn run() -> Result<()> {
 
         let xls_folder = "data";
         if let Err(e) = std::fs::create_dir_all(xls_folder) {
-            error!("Failed to create data folder for account {}: {}", account, e);
+            error!(
+                "Failed to create data folder for account {}: {}",
+                account, e
+            );
             failures.push(format!("[{account}] create data folder failed: {e}"));
             continue;
         }

@@ -483,8 +483,7 @@ fn save_config(config: &Cloud189Config) -> Result<()> {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let data = serde_json::to_vec_pretty(config).context("serialize config")?;
-    write_private(&config.path, &data)
-        .with_context(|| format!("write {}", config.path.display()))
+    write_private(&config.path, &data).with_context(|| format!("write {}", config.path.display()))
 }
 
 impl Cloud189Client {
