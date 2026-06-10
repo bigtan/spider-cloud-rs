@@ -381,10 +381,18 @@ fn preprocess_image(image_bytes: &[u8]) -> Result<Array4<f32>> {
     let img = image::load_from_memory(image_bytes)
         .context("Failed to decode CAPTCHA image")?
         .to_rgb8();
-    let resized = keep_ratio_resize(&img);
+    let (resized, content_width) = keep_ratio_resize(&img);
 
-    let mut data = Array4::<f32>::zeros((CHUNK_COUNT, CHANNELS, MASK_HEIGHT, CHUNK_WIDTH));
-    for chunk in 0..CHUNK_COUNT {
+    // 只为覆盖实际内容的滑动窗口构建 batch：CFMMC 验证码缩放后远窄于
+    // 一个窗口，固定 3 个窗口会让 2/3 的推理算空白填充
+    let chunk_count = if content_width <= CHUNK_WIDTH {
+        1
+    } else {
+        (1 + (content_width - CHUNK_WIDTH).div_ceil(CHUNK_STRIDE)).min(CHUNK_COUNT)
+    };
+
+    let mut data = Array4::<f32>::zeros((chunk_count, CHANNELS, MASK_HEIGHT, CHUNK_WIDTH));
+    for chunk in 0..chunk_count {
         let left = CHUNK_STRIDE * chunk;
         for y in 0..MASK_HEIGHT {
             for x in 0..CHUNK_WIDTH {
@@ -399,7 +407,9 @@ fn preprocess_image(image_bytes: &[u8]) -> Result<Array4<f32>> {
     Ok(data)
 }
 
-fn keep_ratio_resize(img: &RgbImage) -> RgbImage {
+/// Resize keeping aspect ratio onto a fixed-size canvas; also returns the
+/// width actually covered by image content (the rest is black padding).
+fn keep_ratio_resize(img: &RgbImage) -> (RgbImage, usize) {
     let (width, height) = img.dimensions();
     let cur_ratio = width as f32 / height as f32;
     let max_ratio = MASK_WIDTH as f32 / MASK_HEIGHT as f32;
@@ -424,7 +434,7 @@ fn keep_ratio_resize(img: &RgbImage) -> RgbImage {
         }
     }
 
-    canvas
+    (canvas, target_width)
 }
 
 fn load_vocab(path: &Path) -> Result<Vec<String>> {
@@ -469,22 +479,21 @@ fn argmax_predictions(dims: &[usize], probabilities: &[f32]) -> Result<Vec<Vec<u
 
 fn ctc_decode_captcha(preds: &[Vec<usize>], vocab: &[String], captcha_length: usize) -> String {
     let mut decoded = String::new();
-    let Some(row) = preds.first() else {
-        return decoded;
-    };
-
-    let mut last = 0;
-    for &idx in row {
-        if idx != last && idx != 0 {
-            if let Some(token) = vocab.get(idx) {
-                for ch in token.chars().filter(char::is_ascii_alphanumeric) {
-                    if decoded.len() < captcha_length {
-                        decoded.push(ch);
+    // 依次解码每个滑动窗口的预测，而不是只取第一个窗口
+    for row in preds {
+        let mut last = 0;
+        for &idx in row {
+            if idx != last && idx != 0 {
+                if let Some(token) = vocab.get(idx) {
+                    for ch in token.chars().filter(char::is_ascii_alphanumeric) {
+                        if decoded.len() < captcha_length {
+                            decoded.push(ch);
+                        }
                     }
                 }
             }
+            last = idx;
         }
-        last = idx;
     }
 
     decoded
@@ -492,4 +501,24 @@ fn ctc_decode_captcha(preds: &[Vec<usize>], vocab: &[String], captcha_length: us
 
 fn is_token_error(error_code: u64) -> bool {
     matches!(error_code, 110 | 111)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ctc_decode_captcha;
+
+    #[test]
+    fn ctc_decode_collapses_repeats_and_spans_rows() {
+        let vocab: Vec<String> = vec!["".into(), "".into(), "a".into(), "b".into()];
+        // blank=0；重复索引折叠；第二个窗口的预测也应被解码
+        let preds = vec![vec![0, 2, 2, 0, 3], vec![2, 0, 2]];
+        assert_eq!(ctc_decode_captcha(&preds, &vocab, 6), "abaa");
+    }
+
+    #[test]
+    fn ctc_decode_caps_at_captcha_length() {
+        let vocab: Vec<String> = vec!["".into(), "".into(), "a".into()];
+        let preds = vec![vec![2, 0, 2, 0, 2, 0, 2]];
+        assert_eq!(ctc_decode_captcha(&preds, &vocab, 3), "aaa");
+    }
 }
