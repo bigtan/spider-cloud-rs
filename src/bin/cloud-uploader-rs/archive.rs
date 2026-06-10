@@ -27,7 +27,7 @@ pub fn create_archive(
         .arg("-mx=9") // Maximum compression
         .arg("-m0=lzma2") // LZMA2 algorithm
         .arg("-md=256m") // 256MB dictionary
-        .arg("-ms=off"); // Solid compression
+        .arg("-ms=off"); // Disable solid compression
 
     if let Some(pwd) = password {
         command.arg(format!("-p{}", pwd));

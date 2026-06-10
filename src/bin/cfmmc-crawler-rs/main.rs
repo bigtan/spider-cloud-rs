@@ -133,7 +133,6 @@ fn run() -> Result<()> {
 
     // 对每个账号进行爬取和通知
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    //let date = "2025-07-16".to_string();
     info!("Processing accounts for date: {}", date);
 
     let mut accounts_data = IndexMap::new();
@@ -202,7 +201,12 @@ fn run() -> Result<()> {
 
         match extract_daily_values(&xls_path, "客户交易结算日报") {
             Some((values, found_keys)) if found_keys > 0 => {
-                info!("Extracted values for account {}: {:?}", account, values);
+                // 具体金额仅在 debug 级别输出，避免财务数据落入常规日志
+                tracing::debug!("Extracted values for account {}: {:?}", account, values);
+                info!(
+                    "Extracted {} settlement value(s) for account {}",
+                    found_keys, account
+                );
                 any_settlement_found = true;
                 accounts_data.insert(account.clone(), Some(values));
             }
