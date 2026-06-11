@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::Local;
 use serde::Deserialize;
 use spider_cloud_rs::logging;
-use spider_cloud_rs::uploader::{BaiduPanUploader, Cloud189Uploader, Uploader};
+use spider_cloud_rs::uploader::{BaiduPanUploader, Cloud189Uploader, UploadContext, Uploader};
 use std::env;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -143,14 +143,13 @@ fn main() -> Result<()> {
     for item in config.backups {
         let date = Local::now().format("%Y%m%d").to_string();
         let base_name = normalize_archive_name(&item.archive_name);
-        let source_path = resolve_source_path(&item, &date, base_name)?;
+        let mut ctx = UploadContext::with_date(date.as_str());
+        ctx.insert("archive_name", base_name);
+        let source_path = resolve_source_path(&item, &ctx)?;
         if let Some(command) = item.command.as_deref() {
-            let expanded_command = expand_placeholders(command, &date, base_name);
+            let expanded_command = ctx.expand(command);
             info!("Running command for backup item: {}", base_name);
-            let workdir = item
-                .command_workdir
-                .as_deref()
-                .map(|dir| expand_placeholders(dir, &date, base_name));
+            let workdir = item.command_workdir.as_deref().map(|dir| ctx.expand(dir));
             if let Err(err) = run_command(&expanded_command, workdir.as_deref()) {
                 let message = format!("[{base_name}] command failed: {err}");
                 error!("{}", message);
@@ -187,7 +186,7 @@ fn main() -> Result<()> {
             continue;
         }
 
-        let remote_dir = expand_placeholders(&item.remote_dir, &date, base_name);
+        let remote_dir = ctx.expand(&item.remote_dir);
         let mut upload_failed = false;
         for uploader in uploaders.iter_mut() {
             info!("Uploading to {}", uploader.name());
@@ -288,12 +287,6 @@ fn normalize_archive_name(archive_name: &str) -> &str {
     }
 }
 
-fn expand_placeholders(input: &str, date: &str, archive_name: &str) -> String {
-    input
-        .replace("{date}", date)
-        .replace("{archive_name}", archive_name)
-}
-
 fn build_archive_path(archive_name: &str, date: &str) -> Result<PathBuf> {
     let file_name = format!("{archive_name}-{date}.tar.zst");
     let cwd = env::current_dir()?;
@@ -312,13 +305,13 @@ fn build_archive_path(archive_name: &str, date: &str) -> Result<PathBuf> {
     Ok(output_path)
 }
 
-fn resolve_source_path(item: &BackupItem, date: &str, archive_name: &str) -> Result<PathBuf> {
+fn resolve_source_path(item: &BackupItem, ctx: &UploadContext) -> Result<PathBuf> {
     let candidate = item
         .source_path
         .as_deref()
         .or(item.source_dir.as_deref())
         .context("Missing source_path/source_dir in backup item")?;
-    let expanded = expand_placeholders(candidate, date, archive_name);
+    let expanded = ctx.expand(candidate);
     let trimmed = expanded.trim();
     if trimmed.is_empty() {
         anyhow::bail!("source_path/source_dir cannot be empty");
@@ -393,9 +386,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_expand_placeholders() {
-        let result = expand_placeholders("/a/{archive_name}/{date}", "20260211", "demo");
-        assert_eq!(result, "/a/demo/20260211");
+    fn test_upload_context_expands_item_placeholders() {
+        let mut ctx = UploadContext::with_date("20260211");
+        ctx.insert("archive_name", "demo");
+        assert_eq!(ctx.expand("/a/{archive_name}/{date}"), "/a/demo/20260211");
     }
 
     #[test]
