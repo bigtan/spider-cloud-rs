@@ -16,7 +16,8 @@ use captcha::recognizer::{
 };
 use cfmmc::CFMMCCollector;
 use env_config::{BaiduOcrConfig, CaptchaProvider, OnnxCaptchaConfig, load_config};
-use notifier::{ChanifyNotifier, Notifier, PushgoNotifier, QQEmailNotifier};
+use notifier::AccountNotifier;
+use spider_cloud_rs::notify;
 use std::path::PathBuf;
 use xls_parser::extract_daily_values;
 
@@ -63,60 +64,62 @@ fn run() -> Result<()> {
     );
 
     // Initialize notifiers
-    let mut notifiers: Vec<Box<dyn Notifier>> = Vec::new();
+    let mut notifiers: Vec<AccountNotifier> = Vec::new();
 
     if notifier_config.chanify.enabled {
         info!("Initializing Chanify notifier");
-        notifiers.push(Box::new(ChanifyNotifier {
-            chanify_url: notifier_config.chanify.url,
-            chanify_token: notifier_config
-                .chanify
-                .token
-                .context("Chanify enabled but token not configured")?,
-        }));
+        notifiers.push(AccountNotifier::Chanify(
+            notify::chanify::ChanifyNotifier::new(
+                notifier_config.chanify.url,
+                notifier_config
+                    .chanify
+                    .token
+                    .context("Chanify enabled but token not configured")?,
+            ),
+        ));
     }
 
     if notifier_config.email.enabled {
         info!("Initializing Email notifier");
-        notifiers.push(Box::new(QQEmailNotifier {
-            sender: notifier_config
+        notifiers.push(AccountNotifier::Email(notify::email::EmailNotifier::new(
+            notifier_config
                 .email
                 .sender
                 .context("Email enabled but sender not configured")?,
-            password: notifier_config
+            notifier_config
                 .email
                 .password
                 .context("Email enabled but password not configured")?,
-            recipient: notifier_config
+            notifier_config
                 .email
                 .recipient
                 .context("Email enabled but recipient not configured")?,
-        }));
+        )));
     }
 
     if notifier_config.pushgo.enabled {
         info!("Initializing Pushgo notifier");
-        notifiers.push(Box::new(PushgoNotifier {
-            api_token: notifier_config
+        notifiers.push(AccountNotifier::Pushgo(notify::pushgo::PushgoNotifier::new(
+            notifier_config.pushgo.url,
+            notifier_config
                 .pushgo
                 .api_token
                 .context("Pushgo enabled but API token not configured")?,
-            url: notifier_config.pushgo.url,
-            channel_id: notifier_config
-                .pushgo
-                .channel_id
-                .context("Pushgo enabled but channel id not configured")?,
-            password: notifier_config
-                .pushgo
-                .password
-                .context("Pushgo enabled but password not configured")?,
-            hex_key: notifier_config
+            notifier_config
                 .pushgo
                 .hex_key
                 .context("Pushgo enabled but hex key not configured")?,
-            icon: notifier_config.pushgo.icon,
-            image: notifier_config.pushgo.image,
-        }));
+            notifier_config
+                .pushgo
+                .channel_id
+                .context("Pushgo enabled but channel id not configured")?,
+            notifier_config
+                .pushgo
+                .password
+                .context("Pushgo enabled but password not configured")?,
+            notifier_config.pushgo.icon,
+            notifier_config.pushgo.image,
+        )));
     }
 
     // 初始化验证码识别器
@@ -230,10 +233,10 @@ fn run() -> Result<()> {
         info!("Sending notifications to {} notifiers", notifiers.len());
         for notifier in &notifiers {
             match notifier.send(&date, &accounts_data) {
-                true => info!("Notification sent successfully"),
-                false => {
-                    error!("Failed to send notification");
-                    failures.push("notification send failed".to_string());
+                Ok(()) => info!("{} notification sent successfully", notifier.name()),
+                Err(e) => {
+                    error!("{} notification failed: {}", notifier.name(), e);
+                    failures.push(format!("{} notification failed: {e}", notifier.name()));
                 }
             }
         }

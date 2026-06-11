@@ -1,104 +1,47 @@
+use anyhow::Result;
 use indexmap::IndexMap;
 use std::collections::HashMap;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use spider_cloud_rs::notify;
-use spider_cloud_rs::notify::Notifier as EsNotifier;
+use spider_cloud_rs::notify::Notifier as _;
 
 /// Per-account settlement values; `None` means extraction failed or no
 /// settlement data was published, which must not be rendered as zeros.
 pub type AccountsData = IndexMap<String, Option<HashMap<String, f64>>>;
 
-pub trait Notifier {
-    fn send(&self, date_str: &str, accounts_data: &AccountsData) -> bool;
+/// A notification channel with its CFMMC-specific message format.
+/// Wraps the shared library notifiers so each one is built once.
+pub enum AccountNotifier {
+    Chanify(notify::chanify::ChanifyNotifier),
+    Email(notify::email::EmailNotifier),
+    Pushgo(notify::pushgo::PushgoNotifier),
 }
 
-pub struct ChanifyNotifier {
-    pub chanify_url: String,
-    pub chanify_token: String,
-}
-
-impl Notifier for ChanifyNotifier {
-    fn send(&self, date_str: &str, accounts_data: &AccountsData) -> bool {
-        info!("Sending Chanify notification for date: {}", date_str);
-
-        let text = build_chanify_message(date_str, accounts_data);
-        let subject = format!("CFMMC 账户数据 - {}", date_str);
-        let notifier = notify::chanify::ChanifyNotifier::new(
-            self.chanify_url.clone(),
-            self.chanify_token.clone(),
-        );
-
-        match notifier.send(&subject, &text) {
-            Ok(()) => true,
-            Err(e) => {
-                error!("Error sending Chanify notification: {}", e);
-                false
-            }
+impl AccountNotifier {
+    pub fn name(&self) -> &'static str {
+        match self {
+            AccountNotifier::Chanify(_) => "Chanify",
+            AccountNotifier::Email(_) => "Email",
+            AccountNotifier::Pushgo(_) => "Pushgo",
         }
     }
-}
 
-pub struct QQEmailNotifier {
-    pub sender: String,
-    pub password: String,
-    pub recipient: String,
-}
-
-impl Notifier for QQEmailNotifier {
-    fn send(&self, date_str: &str, accounts_data: &AccountsData) -> bool {
-        info!("Sending QQ Email notification for date: {}", date_str);
-
-        let html = build_email_html(date_str, accounts_data);
-        let subject = format!("CFMMC 账户数据汇总 - {}", date_str);
-        let notifier = notify::email::EmailNotifier::new(
-            self.sender.clone(),
-            self.password.clone(),
-            self.recipient.clone(),
-        );
-
-        match notifier.send_html(&subject, &html) {
-            Ok(()) => true,
-            Err(e) => {
-                error!("Error sending QQ Email notification: {}", e);
-                false
-            }
-        }
-    }
-}
-
-pub struct PushgoNotifier {
-    pub api_token: String,
-    pub url: String,
-    pub channel_id: String,
-    pub password: String,
-    pub hex_key: String,
-    pub icon: Option<String>,
-    pub image: Option<String>,
-}
-
-impl Notifier for PushgoNotifier {
-    fn send(&self, date_str: &str, accounts_data: &AccountsData) -> bool {
-        info!("Sending Pushgo notification for date: {}", date_str);
-
-        let markdown = build_pushgo_markdown(date_str, accounts_data);
-        let subject = format!("CFMMC 账户数据 - {}", date_str);
-        let notifier = notify::pushgo::PushgoNotifier::new(
-            self.url.clone(),
-            self.api_token.clone(),
-            self.hex_key.clone(),
-            self.channel_id.clone(),
-            self.password.clone(),
-            self.icon.clone(),
-            self.image.clone(),
-        );
-
-        match notifier.send(&subject, &markdown) {
-            Ok(()) => true,
-            Err(e) => {
-                error!("Error sending Pushgo notification: {}", e);
-                false
-            }
+    pub fn send(&self, date_str: &str, accounts_data: &AccountsData) -> Result<()> {
+        info!("Sending {} notification for date: {}", self.name(), date_str);
+        match self {
+            AccountNotifier::Chanify(notifier) => notifier.send(
+                &format!("CFMMC 账户数据 - {date_str}"),
+                &build_chanify_message(date_str, accounts_data),
+            ),
+            AccountNotifier::Email(notifier) => notifier.send_html(
+                &format!("CFMMC 账户数据汇总 - {date_str}"),
+                &build_email_html(date_str, accounts_data),
+            ),
+            AccountNotifier::Pushgo(notifier) => notifier.send(
+                &format!("CFMMC 账户数据 - {date_str}"),
+                &build_pushgo_markdown(date_str, accounts_data),
+            ),
         }
     }
 }
