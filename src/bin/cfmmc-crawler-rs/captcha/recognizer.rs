@@ -381,18 +381,12 @@ fn preprocess_image(image_bytes: &[u8]) -> Result<Array4<f32>> {
     let img = image::load_from_memory(image_bytes)
         .context("Failed to decode CAPTCHA image")?
         .to_rgb8();
-    let (resized, content_width) = keep_ratio_resize(&img);
+    let resized = keep_ratio_resize(&img);
 
-    // 只为覆盖实际内容的滑动窗口构建 batch：CFMMC 验证码缩放后远窄于
-    // 一个窗口，固定 3 个窗口会让 2/3 的推理算空白填充
-    let chunk_count = if content_width <= CHUNK_WIDTH {
-        1
-    } else {
-        (1 + (content_width - CHUNK_WIDTH).div_ceil(CHUNK_STRIDE)).min(CHUNK_COUNT)
-    };
-
-    let mut data = Array4::<f32>::zeros((chunk_count, CHANNELS, MASK_HEIGHT, CHUNK_WIDTH));
-    for chunk in 0..chunk_count {
+    // The exported model has a fixed three-window reshape internally, so the
+    // input batch must stay at CHUNK_COUNT even if later windows are padding.
+    let mut data = Array4::<f32>::zeros((CHUNK_COUNT, CHANNELS, MASK_HEIGHT, CHUNK_WIDTH));
+    for chunk in 0..CHUNK_COUNT {
         let left = CHUNK_STRIDE * chunk;
         for y in 0..MASK_HEIGHT {
             for x in 0..CHUNK_WIDTH {
@@ -407,9 +401,7 @@ fn preprocess_image(image_bytes: &[u8]) -> Result<Array4<f32>> {
     Ok(data)
 }
 
-/// Resize keeping aspect ratio onto a fixed-size canvas; also returns the
-/// width actually covered by image content (the rest is black padding).
-fn keep_ratio_resize(img: &RgbImage) -> (RgbImage, usize) {
+fn keep_ratio_resize(img: &RgbImage) -> RgbImage {
     let (width, height) = img.dimensions();
     let cur_ratio = width as f32 / height as f32;
     let max_ratio = MASK_WIDTH as f32 / MASK_HEIGHT as f32;
@@ -434,7 +426,7 @@ fn keep_ratio_resize(img: &RgbImage) -> (RgbImage, usize) {
         }
     }
 
-    (canvas, target_width)
+    canvas
 }
 
 fn load_vocab(path: &Path) -> Result<Vec<String>> {
