@@ -99,27 +99,29 @@ fn run() -> Result<()> {
 
     if notifier_config.pushgo.enabled {
         info!("Initializing Pushgo notifier");
-        notifiers.push(AccountNotifier::Pushgo(notify::pushgo::PushgoNotifier::new(
-            notifier_config.pushgo.url,
-            notifier_config
-                .pushgo
-                .api_token
-                .context("Pushgo enabled but API token not configured")?,
-            notifier_config
-                .pushgo
-                .hex_key
-                .context("Pushgo enabled but hex key not configured")?,
-            notifier_config
-                .pushgo
-                .channel_id
-                .context("Pushgo enabled but channel id not configured")?,
-            notifier_config
-                .pushgo
-                .password
-                .context("Pushgo enabled but password not configured")?,
-            notifier_config.pushgo.icon,
-            notifier_config.pushgo.image,
-        )));
+        notifiers.push(AccountNotifier::Pushgo(
+            notify::pushgo::PushgoNotifier::new(
+                notifier_config.pushgo.url,
+                notifier_config
+                    .pushgo
+                    .api_token
+                    .context("Pushgo enabled but API token not configured")?,
+                notifier_config
+                    .pushgo
+                    .hex_key
+                    .context("Pushgo enabled but hex key not configured")?,
+                notifier_config
+                    .pushgo
+                    .channel_id
+                    .context("Pushgo enabled but channel id not configured")?,
+                notifier_config
+                    .pushgo
+                    .password
+                    .context("Pushgo enabled but password not configured")?,
+                notifier_config.pushgo.icon,
+                notifier_config.pushgo.image,
+            ),
+        ));
     }
 
     // 初始化验证码识别器

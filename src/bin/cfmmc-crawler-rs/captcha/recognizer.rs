@@ -458,8 +458,8 @@ fn argmax_predictions(dims: &[usize], probabilities: &[f32]) -> Result<Vec<Vec<u
     }
 
     let mut preds = vec![vec![0; length]; batch];
-    for b in 0..batch {
-        for t in 0..length {
+    for (b, row) in preds.iter_mut().enumerate() {
+        for (t, slot) in row.iter_mut().enumerate() {
             let offset = (b * length + t) * classes;
             let mut best_idx = 0;
             let mut best_score = f32::NEG_INFINITY;
@@ -470,7 +470,7 @@ fn argmax_predictions(dims: &[usize], probabilities: &[f32]) -> Result<Vec<Vec<u
                     best_idx = cls;
                 }
             }
-            preds[b][t] = best_idx;
+            *slot = best_idx;
         }
     }
 
@@ -483,12 +483,13 @@ fn ctc_decode_captcha(preds: &[Vec<usize>], vocab: &[String], captcha_length: us
     for row in preds {
         let mut last = 0;
         for &idx in row {
-            if idx != last && idx != 0 {
-                if let Some(token) = vocab.get(idx) {
-                    for ch in token.chars().filter(char::is_ascii_alphanumeric) {
-                        if decoded.len() < captcha_length {
-                            decoded.push(ch);
-                        }
+            if idx != last
+                && idx != 0
+                && let Some(token) = vocab.get(idx)
+            {
+                for ch in token.chars().filter(char::is_ascii_alphanumeric) {
+                    if decoded.len() < captcha_length {
+                        decoded.push(ch);
                     }
                 }
             }

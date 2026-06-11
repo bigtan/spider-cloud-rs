@@ -169,7 +169,11 @@ struct UploadReport<'a> {
 
 impl UploadReport<'_> {
     fn status_label(&self) -> &'static str {
-        if self.success { "完成" } else { "部分失败" }
+        if self.success {
+            "完成"
+        } else {
+            "部分失败"
+        }
     }
 
     fn headline(&self) -> String {

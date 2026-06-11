@@ -28,7 +28,11 @@ impl AccountNotifier {
     }
 
     pub fn send(&self, date_str: &str, accounts_data: &AccountsData) -> Result<()> {
-        info!("Sending {} notification for date: {}", self.name(), date_str);
+        info!(
+            "Sending {} notification for date: {}",
+            self.name(),
+            date_str
+        );
         match self {
             AccountNotifier::Chanify(notifier) => notifier.send(
                 &format!("CFMMC 账户数据 - {date_str}"),

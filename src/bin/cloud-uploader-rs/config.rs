@@ -121,7 +121,7 @@ impl Config {
         self.archive_source_folder = ctx.expand(&self.archive_source_folder);
         self.archive_output = ctx.expand(&self.archive_output);
         self.files_source_folder = ctx.expand(&self.files_source_folder);
-        for field in [
+        for value in [
             &mut self.file_pattern,
             &mut self.archive_upload_path,
             &mut self.files_upload_path,
@@ -129,10 +129,11 @@ impl Config {
             &mut self.baidu_files_upload_path,
             &mut self.cloud189_archive_upload_path,
             &mut self.cloud189_files_upload_path,
-        ] {
-            if let Some(value) = field {
-                *value = ctx.expand(value);
-            }
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *value = ctx.expand(value);
         }
 
         Ok(())
