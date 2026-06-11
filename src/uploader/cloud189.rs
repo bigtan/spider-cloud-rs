@@ -29,7 +29,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::Result;
-use crate::uploader::Uploader;
+use crate::uploader::{Uploader, read_full, write_private};
 use urlencoding::decode as url_decode;
 
 const API_BASE: &str = "https://api.cloud.189.cn";
@@ -50,6 +50,8 @@ const COMMIT_UPLOAD_MAX_RETRIES: u32 = 5;
 const COMMIT_UPLOAD_BACKOFF_BASE_MS: u64 = 1_000;
 const DIR_OP_MAX_RETRIES: u32 = 3;
 const DIR_OP_BACKOFF_BASE_MS: u64 = 1_000;
+const QR_LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+const QR_POLL_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Cloud189Config {
@@ -103,6 +105,23 @@ impl Session {
     }
 }
 
+impl From<SessionResp> for Session {
+    fn from(resp: SessionResp) -> Self {
+        Self {
+            login_name: resp.login_name,
+            key: resp.key,
+            secret: resp.secret,
+            keep_alive: resp.keep_alive,
+            file_diff_span: resp.file_diff_span,
+            user_info_span: resp.user_info_span,
+            family_key: resp.family_key,
+            family_secret: resp.family_secret,
+            access_token: resp.access_token,
+            refresh_token: resp.refresh_token,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Cloud189Uploader {
     client: Cloud189Client,
@@ -115,7 +134,10 @@ impl Cloud189Uploader {
         password: Option<String>,
         use_qr: bool,
     ) -> Result<Self> {
-        let config_path = config_path.unwrap_or_else(default_config_path);
+        let config_path = match config_path {
+            Some(path) => path,
+            None => default_config_path()?,
+        };
         let mut config = load_config(&config_path)?;
         config.path = config_path.clone();
 
@@ -425,12 +447,13 @@ struct FileHashes {
     parts: Vec<PartInfo>,
 }
 
-fn default_config_path() -> PathBuf {
-    let home = dirs::home_dir().expect("home dir");
-    home.join(".config")
+fn default_config_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot determine home directory"))?;
+    Ok(home
+        .join(".config")
         .join("spider-cloud")
         .join("cloud189")
-        .join("config.json")
+        .join("config.json"))
 }
 
 fn load_config(path: &Path) -> Result<Cloud189Config> {
@@ -441,7 +464,16 @@ fn load_config(path: &Path) -> Result<Cloud189Config> {
         });
     }
     let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
-    let mut cfg: Cloud189Config = serde_json::from_slice(&data).unwrap_or_default();
+    let mut cfg: Cloud189Config = match serde_json::from_slice(&data) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            warn!(
+                "config file {} is invalid, starting with an empty config: {err}",
+                path.display()
+            );
+            Cloud189Config::default()
+        }
+    };
     cfg.path = path.to_path_buf();
     Ok(cfg)
 }
@@ -451,7 +483,7 @@ fn save_config(config: &Cloud189Config) -> Result<()> {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let data = serde_json::to_vec_pretty(config).context("serialize config")?;
-    fs::write(&config.path, data).with_context(|| format!("write {}", config.path.display()))
+    write_private(&config.path, &data).with_context(|| format!("write {}", config.path.display()))
 }
 
 impl Cloud189Client {
@@ -627,19 +659,7 @@ impl Cloud189Client {
         self.config.sson = sson.clone();
 
         let session = self.fetch_session(&submit.to_url)?;
-        self.config.session = Some(Session {
-            login_name: session.login_name,
-            key: session.key,
-            secret: session.secret,
-            keep_alive: session.keep_alive,
-            file_diff_span: session.file_diff_span,
-            user_info_span: session.user_info_span,
-            family_key: session.family_key,
-            family_secret: session.family_secret,
-            access_token: session.access_token,
-            refresh_token: session.refresh_token,
-            ..Default::default()
-        });
+        self.config.session = Some(session.into());
         self.config.user = Some(User {
             name: username.to_string(),
             password: String::new(),
@@ -709,6 +729,7 @@ impl Cloud189Client {
             qr_url
         );
 
+        let deadline = std::time::Instant::now() + QR_LOGIN_TIMEOUT;
         loop {
             let state = self.query_qr_state(&qr, &app_conf, &referer)?;
             match state.status {
@@ -723,19 +744,7 @@ impl Cloud189Client {
                         self.config.sson = Some(sson);
                     }
                     let session = self.fetch_session(&state.redirect_url)?;
-                    self.config.session = Some(Session {
-                        login_name: session.login_name,
-                        key: session.key,
-                        secret: session.secret,
-                        keep_alive: session.keep_alive,
-                        file_diff_span: session.file_diff_span,
-                        user_info_span: session.user_info_span,
-                        family_key: session.family_key,
-                        family_secret: session.family_secret,
-                        access_token: session.access_token,
-                        refresh_token: session.refresh_token,
-                        ..Default::default()
-                    });
+                    self.config.session = Some(session.into());
                     save_config(&self.config)?;
                     info!("QR code login succeeded");
                     return Ok(());
@@ -745,7 +754,13 @@ impl Cloud189Client {
                     return Err(anyhow!("unknown qr login status: {}", state.status));
                 }
             }
-            sleep(Duration::from_secs(3));
+            if std::time::Instant::now() >= deadline {
+                return Err(anyhow!(
+                    "QR code login timed out after {}s without confirmation",
+                    QR_LOGIN_TIMEOUT.as_secs()
+                ));
+            }
+            sleep(QR_POLL_INTERVAL);
         }
     }
 
@@ -889,58 +904,25 @@ impl Cloud189Client {
     }
 
     fn update_session(&mut self, session: SessionResp) {
-        let current = self.config.session.clone().unwrap_or_default();
+        fn pick(new: String, old: String) -> String {
+            if new.is_empty() { old } else { new }
+        }
+        fn pick_span(new: i64, old: i64) -> i64 {
+            if new == 0 { old } else { new }
+        }
+
+        let current = self.config.session.take().unwrap_or_default();
         let merged = Session {
-            login_name: if session.login_name.is_empty() {
-                current.login_name
-            } else {
-                session.login_name
-            },
-            key: if session.key.is_empty() {
-                current.key
-            } else {
-                session.key
-            },
-            secret: if session.secret.is_empty() {
-                current.secret
-            } else {
-                session.secret
-            },
-            keep_alive: if session.keep_alive == 0 {
-                current.keep_alive
-            } else {
-                session.keep_alive
-            },
-            file_diff_span: if session.file_diff_span == 0 {
-                current.file_diff_span
-            } else {
-                session.file_diff_span
-            },
-            user_info_span: if session.user_info_span == 0 {
-                current.user_info_span
-            } else {
-                session.user_info_span
-            },
-            family_key: if session.family_key.is_empty() {
-                current.family_key
-            } else {
-                session.family_key
-            },
-            family_secret: if session.family_secret.is_empty() {
-                current.family_secret
-            } else {
-                session.family_secret
-            },
-            access_token: if session.access_token.is_empty() {
-                current.access_token
-            } else {
-                session.access_token
-            },
-            refresh_token: if session.refresh_token.is_empty() {
-                current.refresh_token
-            } else {
-                session.refresh_token
-            },
+            login_name: pick(session.login_name, current.login_name),
+            key: pick(session.key, current.key),
+            secret: pick(session.secret, current.secret),
+            keep_alive: pick_span(session.keep_alive, current.keep_alive),
+            file_diff_span: pick_span(session.file_diff_span, current.file_diff_span),
+            user_info_span: pick_span(session.user_info_span, current.user_info_span),
+            family_key: pick(session.family_key, current.family_key),
+            family_secret: pick(session.family_secret, current.family_secret),
+            access_token: pick(session.access_token, current.access_token),
+            refresh_token: pick(session.refresh_token, current.refresh_token),
         };
         self.config.session = Some(merged);
     }
@@ -1495,7 +1477,7 @@ fn compute_hashes(path: &Path) -> Result<FileHashes> {
     let mut offset: u64 = 0;
     let mut buf = vec![0u8; SLICE_SIZE];
     loop {
-        let n = file.read(&mut buf)?;
+        let n = read_full(&mut file, &mut buf)?;
         if n == 0 {
             break;
         }
@@ -1672,15 +1654,18 @@ fn is_user_invalid_token(err: &anyhow::Error) -> bool {
 
 fn is_session_related_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string().to_ascii_lowercase();
+    // 故意不用宽泛的 "token"/"login"：携带文件名或 URL 的普通错误
+    // 不应触发整个会话刷新流程
     [
         "userinvalidopentoken",
         "invalidsessionkey",
         "sessionkey",
         "access token",
-        "token",
+        "accesstoken",
+        "invalid token",
+        "invalidtoken",
         "signature",
         "sign error",
-        "login",
         "please login",
         "认证",
         "鉴权",
@@ -1774,7 +1759,12 @@ fn snippet(text: &str) -> String {
     if trimmed.len() <= max {
         trimmed.to_string()
     } else {
-        format!("{}...", &trimmed[..max])
+        // 截断点必须落在字符边界上，否则字节切片会 panic
+        let mut end = max;
+        while !trimmed.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &trimmed[..end])
     }
 }
 
@@ -1873,9 +1863,23 @@ mod tests {
     use super::{
         is_retryable_commit_code, is_retryable_dir_error, is_retryable_upload_code,
         is_retryable_upload_error, is_session_related_error, is_success_code,
-        parse_list_files_text,
+        parse_list_files_text, snippet,
     };
     use anyhow::anyhow;
+
+    #[test]
+    fn snippet_truncates_on_char_boundary() {
+        let long_ascii = "a".repeat(300);
+        assert_eq!(snippet(&long_ascii).len(), 203);
+
+        // 每个汉字 3 字节，第 200 字节不是字符边界，不应 panic
+        let long_chinese = "错".repeat(100);
+        let result = snippet(&long_chinese);
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= 203);
+
+        assert_eq!(snippet("  short  "), "short");
+    }
 
     #[test]
     fn success_code_accepts_zero_and_success() {
@@ -1901,6 +1905,13 @@ mod tests {
         )));
         assert!(!is_session_related_error(&anyhow!(
             "list files error (res_code 12): parent folder not found"
+        )));
+        // 含 "login"/"token" 子串但与会话无关的错误不应触发会话刷新
+        assert!(!is_session_related_error(&anyhow!(
+            "upload failed: file login.txt is broken"
+        )));
+        assert!(!is_session_related_error(&anyhow!(
+            "create folder error: name tokenizer rejected input"
         )));
     }
 

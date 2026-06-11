@@ -9,37 +9,41 @@ mod env_config;
 mod notifier;
 mod xls_parser;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use captcha::recognizer::{
     BaiduOcrCaptchaRecognizer, BaiduOcrOptions, CaptchaRecognizer, FallbackCaptchaRecognizer,
     OnnxCaptchaOptions, OnnxCaptchaRecognizer,
 };
 use cfmmc::CFMMCCollector;
 use env_config::{BaiduOcrConfig, CaptchaProvider, OnnxCaptchaConfig, load_config};
-use notifier::{ChanifyNotifier, Notifier, PushgoNotifier, QQEmailNotifier};
+use notifier::AccountNotifier;
+use spider_cloud_rs::notify;
 use std::path::PathBuf;
 use xls_parser::extract_daily_values;
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            // 日志可能尚未初始化，stderr 兜底；定时任务依赖非零退出码感知失败
+            eprintln!("Error: {err:#}");
+            error!("CFMMC Crawler failed: {err:#}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let config_path = args.next().unwrap_or_else(|| "config.toml".to_string());
     if args.next().is_some() {
-        eprintln!("Too many arguments");
-        return;
+        anyhow::bail!("Too many arguments");
     }
 
-    let config = match load_config(&config_path) {
-        Some(config) => config,
-        None => {
-            eprintln!("Account config missing or invalid");
-            return;
-        }
-    };
+    let config = load_config(&config_path)
+        .with_context(|| format!("Account config missing or invalid: {config_path}"))?;
 
-    if let Err(err) = logging::init_with_file("cfmmc", config.debug) {
-        eprintln!("Failed to initialize logging: {}", err);
-        return;
-    }
+    logging::init_with_file("cfmmc", config.debug).context("Failed to initialize logging")?;
 
     let debug = config.debug;
     if debug {
@@ -60,88 +64,85 @@ fn main() {
     );
 
     // Initialize notifiers
-    let mut notifiers: Vec<Box<dyn Notifier>> = Vec::new();
+    let mut notifiers: Vec<AccountNotifier> = Vec::new();
 
     if notifier_config.chanify.enabled {
         info!("Initializing Chanify notifier");
-        notifiers.push(Box::new(ChanifyNotifier {
-            chanify_url: notifier_config.chanify.url,
-            chanify_token: notifier_config
-                .chanify
-                .token
-                .expect("Chanify token not configured"),
-        }));
+        notifiers.push(AccountNotifier::Chanify(
+            notify::chanify::ChanifyNotifier::new(
+                notifier_config.chanify.url,
+                notifier_config
+                    .chanify
+                    .token
+                    .context("Chanify enabled but token not configured")?,
+            ),
+        ));
     }
 
     if notifier_config.email.enabled {
         info!("Initializing Email notifier");
-        notifiers.push(Box::new(QQEmailNotifier {
-            sender: notifier_config
+        notifiers.push(AccountNotifier::Email(notify::email::EmailNotifier::new(
+            notifier_config
                 .email
                 .sender
-                .expect("Email sender not configured"),
-            password: notifier_config
+                .context("Email enabled but sender not configured")?,
+            notifier_config
                 .email
                 .password
-                .expect("Email password not configured"),
-            recipient: notifier_config
+                .context("Email enabled but password not configured")?,
+            notifier_config
                 .email
                 .recipient
-                .expect("Email recipient not configured"),
-        }));
+                .context("Email enabled but recipient not configured")?,
+        )));
     }
 
     if notifier_config.pushgo.enabled {
         info!("Initializing Pushgo notifier");
-        notifiers.push(Box::new(PushgoNotifier {
-            api_token: notifier_config
-                .pushgo
-                .api_token
-                .expect("Pushgo API token not configured"),
-            url: notifier_config.pushgo.url,
-            channel_id: notifier_config
-                .pushgo
-                .channel_id
-                .expect("Pushgo channel id not configured"),
-            password: notifier_config
-                .pushgo
-                .password
-                .expect("Pushgo password not configured"),
-            hex_key: notifier_config
-                .pushgo
-                .hex_key
-                .expect("Pushgo hex key not configured"),
-            icon: notifier_config.pushgo.icon,
-            image: notifier_config.pushgo.image,
-        }));
+        notifiers.push(AccountNotifier::Pushgo(
+            notify::pushgo::PushgoNotifier::new(
+                notifier_config.pushgo.url,
+                notifier_config
+                    .pushgo
+                    .api_token
+                    .context("Pushgo enabled but API token not configured")?,
+                notifier_config
+                    .pushgo
+                    .hex_key
+                    .context("Pushgo enabled but hex key not configured")?,
+                notifier_config
+                    .pushgo
+                    .channel_id
+                    .context("Pushgo enabled but channel id not configured")?,
+                notifier_config
+                    .pushgo
+                    .password
+                    .context("Pushgo enabled but password not configured")?,
+                notifier_config.pushgo.icon,
+                notifier_config.pushgo.image,
+            ),
+        ));
     }
 
     // 初始化验证码识别器
     info!("Initializing CAPTCHA recognizer");
 
-    let mut recognizer = match build_captcha_recognizer(
+    let mut recognizer = build_captcha_recognizer(
         captcha_config.provider,
         baidu_ocr_config,
         onnx_captcha_config,
         debug,
-    ) {
-        Ok(r) => {
-            info!("CAPTCHA recognizer initialized successfully");
-            r
-        }
-        Err(e) => {
-            error!("Failed to initialize CAPTCHA recognizer: {}", e);
-            return;
-        }
-    };
+    )
+    .context("Failed to initialize CAPTCHA recognizer")?;
+    info!("CAPTCHA recognizer initialized successfully");
 
     // 对每个账号进行爬取和通知
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    //let date = "2025-07-16".to_string();
     info!("Processing accounts for date: {}", date);
 
     let mut accounts_data = IndexMap::new();
     let mut any_settlement_found = false;
+    let mut failures: Vec<String> = Vec::new();
     for (account, password) in account_config
         .accounts
         .iter()
@@ -150,9 +151,13 @@ fn main() {
         info!("Processing account: {}", account);
 
         let xls_folder = "data";
-        if !std::path::Path::new(xls_folder).exists() {
-            std::fs::create_dir_all(xls_folder).expect("Failed to create data folder");
-            info!("Created data folder: {}", xls_folder);
+        if let Err(e) = std::fs::create_dir_all(xls_folder) {
+            error!(
+                "Failed to create data folder for account {}: {}",
+                account, e
+            );
+            failures.push(format!("[{account}] create data folder failed: {e}"));
+            continue;
         }
 
         let xls_path = format!("{xls_folder}/{account}_{date}.xlsx");
@@ -161,27 +166,37 @@ fn main() {
         if !std::path::Path::new(&xls_path).exists() {
             info!("Local file not found, downloading: {}", xls_path);
 
-            let mut collector = CFMMCCollector::new(
+            let mut collector = match CFMMCCollector::new(
                 account.clone(),
                 password.clone(),
                 recognizer.as_mut(),
                 debug,
-            );
+            ) {
+                Ok(collector) => collector,
+                Err(e) => {
+                    error!("Failed to create collector for account {}: {}", account, e);
+                    failures.push(format!("[{account}] create collector failed: {e}"));
+                    continue;
+                }
+            };
 
             if let Err(e) = collector.login() {
                 error!("Login failed for account {}: {}", account, e);
+                failures.push(format!("[{account}] login failed: {e}"));
                 continue;
             }
             info!("Login successful for account: {}", account);
 
             if let Err(e) = collector.set_parameter(&date) {
                 error!("Set parameter failed for account {}: {}", account, e);
+                failures.push(format!("[{account}] set parameter failed: {e}"));
                 continue;
             }
             info!("Parameter set successfully for account: {}", account);
 
             if let Err(e) = collector.download_xls(Path::new(&xls_path)) {
                 error!("Download failed for account {}: {}", account, e);
+                failures.push(format!("[{account}] download failed: {e}"));
                 continue;
             }
             info!("Downloaded XLS file for account: {}", account);
@@ -192,34 +207,58 @@ fn main() {
             );
         }
 
-        let (values, found_keys) = extract_daily_values(&xls_path, "客户交易结算日报");
-        info!("Extracted values for account {}: {:?}", account, values);
-
-        if found_keys > 0 {
-            any_settlement_found = true;
+        match extract_daily_values(&xls_path, "客户交易结算日报") {
+            Some((values, found_keys)) if found_keys > 0 => {
+                // 具体金额仅在 debug 级别输出，避免财务数据落入常规日志
+                tracing::debug!("Extracted values for account {}: {:?}", account, values);
+                info!(
+                    "Extracted {} settlement value(s) for account {}",
+                    found_keys, account
+                );
+                any_settlement_found = true;
+                accounts_data.insert(account.clone(), Some(values));
+            }
+            Some(_) => {
+                info!("No settlement values found for account {}", account);
+                accounts_data.insert(account.clone(), None);
+            }
+            None => {
+                error!("Failed to extract values for account {}", account);
+                failures.push(format!("[{account}] failed to parse {xls_path}"));
+                accounts_data.insert(account.clone(), None);
+            }
         }
-        accounts_data.insert(account.clone(), values);
     }
 
-    if !any_settlement_found {
+    if any_settlement_found {
+        // Send notifications
+        info!("Sending notifications to {} notifiers", notifiers.len());
+        for notifier in &notifiers {
+            match notifier.send(&date, &accounts_data) {
+                Ok(()) => info!("{} notification sent successfully", notifier.name()),
+                Err(e) => {
+                    error!("{} notification failed: {}", notifier.name(), e);
+                    failures.push(format!("{} notification failed: {e}", notifier.name()));
+                }
+            }
+        }
+    } else {
         info!(
             "No settlement info found for date {}, skipping notifications",
             date
         );
-        info!("CFMMC Crawler completed successfully");
-        return;
     }
 
-    // Send notifications
-    info!("Sending notifications to {} notifiers", notifiers.len());
-    for notifier in &notifiers {
-        match notifier.send(&date, &accounts_data) {
-            true => info!("Notification sent successfully"),
-            false => error!("Failed to send notification"),
-        }
+    if !failures.is_empty() {
+        anyhow::bail!(
+            "CFMMC Crawler finished with {} failure(s):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 
     info!("CFMMC Crawler completed successfully");
+    Ok(())
 }
 
 fn build_captcha_recognizer(

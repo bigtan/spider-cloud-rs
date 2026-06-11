@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use rand::RngExt;
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, CONNECTION, HeaderMap, HeaderValue, USER_AGENT};
@@ -29,8 +29,11 @@ impl<'a> CFMMCCollector<'a> {
         password: String,
         captcha_recognizer: &'a mut dyn CaptchaRecognizer,
         debug: bool,
-    ) -> Self {
-        let client = Client::builder().cookie_store(true).build().unwrap();
+    ) -> Result<Self> {
+        let client = Client::builder()
+            .cookie_store(true)
+            .build()
+            .context("Failed to build HTTP client")?;
         let request_delay_min_ms = env::var("CFMMC_REQUEST_DELAY_MIN_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -60,7 +63,7 @@ impl<'a> CFMMCCollector<'a> {
             debug!("Debug mode enabled for CFMMCCollector");
         }
 
-        Self {
+        Ok(Self {
             user_id,
             password,
             client,
@@ -69,7 +72,7 @@ impl<'a> CFMMCCollector<'a> {
             debug,
             request_delay_min_ms,
             request_delay_max_ms,
-        }
+        })
     }
 
     fn jitter_delay(&self, scene: &str) {

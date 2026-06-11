@@ -1,48 +1,70 @@
 use anyhow::{Context, Result};
 use chrono::{NaiveDate, Utc};
 use serde::Deserialize;
+use spider_cloud_rs::uploader::UploadContext;
 use std::fs;
 use tracing::warn;
 
-#[derive(Debug, Clone)]
+/// Deserialized directly from the TOML file (keys unchanged); the
+/// date- and placeholder-dependent fields are resolved in `finalize`.
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub debug: bool,
+    #[serde(default = "default_server_location")]
     pub server_location: String,
+    #[serde(default)]
+    custom_date: Option<String>,
+    /// Resolved at load time from `custom_date` or today's date.
+    #[serde(skip)]
     pub date: String,
+    #[serde(default = "default_upload_mode")]
     pub upload_mode: UploadMode,
+    #[serde(default)]
     pub archive_source_folder: String,
+    #[serde(default)]
     pub archive_output: String,
     pub archive_password: Option<String>,
+    #[serde(default = "default_true")]
     pub require_archive: bool,
+    #[serde(default)]
     pub files_source_folder: String,
     pub file_pattern: Option<String>,
     pub archive_upload_path: Option<String>,
     pub files_upload_path: Option<String>,
+    #[serde(default)]
     pub chanify_enabled: bool,
     pub chanify_token: Option<String>,
+    #[serde(default = "default_chanify_url")]
     pub chanify_url: String,
+    #[serde(default)]
     pub email_enabled: bool,
     pub email_sender: Option<String>,
     pub email_password: Option<String>,
     pub email_recipient: Option<String>,
+    #[serde(default)]
     pub pushgo_enabled: bool,
     pub pushgo_api_token: Option<String>,
     pub pushgo_hex_key: Option<String>,
+    #[serde(default = "default_pushgo_url")]
     pub pushgo_url: String,
     pub pushgo_channel_id: Option<String>,
     pub pushgo_password: Option<String>,
     pub pushgo_icon: Option<String>,
     pub pushgo_image: Option<String>,
+    #[serde(default)]
     pub baidu_enabled: bool,
     pub baidu_app_key: Option<String>,
     pub baidu_app_secret: Option<String>,
     pub baidu_config_path: Option<String>,
     pub baidu_archive_upload_path: Option<String>,
     pub baidu_files_upload_path: Option<String>,
+    #[serde(default)]
     pub cloud189_enabled: bool,
     pub cloud189_config_path: Option<String>,
     pub cloud189_username: Option<String>,
     pub cloud189_password: Option<String>,
+    #[serde(default)]
     pub cloud189_qr_login: bool,
     pub cloud189_archive_upload_path: Option<String>,
     pub cloud189_files_upload_path: Option<String>,
@@ -66,185 +88,55 @@ impl UploadMode {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct RawConfig {
-    debug: Option<bool>,
-    server_location: Option<String>,
-    custom_date: Option<String>,
-    upload_mode: Option<UploadMode>,
-    archive_source_folder: Option<String>,
-    archive_output: Option<String>,
-    archive_password: Option<String>,
-    require_archive: Option<bool>,
-    files_source_folder: Option<String>,
-    file_pattern: Option<String>,
-    archive_upload_path: Option<String>,
-    files_upload_path: Option<String>,
-    chanify_enabled: Option<bool>,
-    chanify_token: Option<String>,
-    chanify_url: Option<String>,
-    email_enabled: Option<bool>,
-    email_sender: Option<String>,
-    email_password: Option<String>,
-    email_recipient: Option<String>,
-    pushgo_enabled: Option<bool>,
-    pushgo_api_token: Option<String>,
-    pushgo_hex_key: Option<String>,
-    pushgo_url: Option<String>,
-    pushgo_channel_id: Option<String>,
-    pushgo_password: Option<String>,
-    pushgo_icon: Option<String>,
-    pushgo_image: Option<String>,
-    baidu_enabled: Option<bool>,
-    baidu_app_key: Option<String>,
-    baidu_app_secret: Option<String>,
-    baidu_config_path: Option<String>,
-    baidu_archive_upload_path: Option<String>,
-    baidu_files_upload_path: Option<String>,
-    cloud189_enabled: Option<bool>,
-    cloud189_config_path: Option<String>,
-    cloud189_username: Option<String>,
-    cloud189_password: Option<String>,
-    cloud189_qr_login: Option<bool>,
-    cloud189_archive_upload_path: Option<String>,
-    cloud189_files_upload_path: Option<String>,
-}
-
 impl Config {
     pub fn from_toml(path: &str) -> Result<Self> {
         let contents = fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path))?;
-        let raw: RawConfig = toml::from_str(&contents).context("Failed to parse config file")?;
+        let mut config: Config =
+            toml::from_str(&contents).context("Failed to parse config file")?;
+        config.finalize()?;
+        Ok(config)
+    }
 
-        let debug = raw.debug.unwrap_or(false);
-        let server_location = raw
-            .server_location
-            .unwrap_or_else(|| "Unknown Server".to_string());
-        let date = parse_date(raw.custom_date.as_deref())?;
-        let upload_mode = raw.upload_mode.unwrap_or(UploadMode::Archive);
+    /// Resolve the date, fill date-dependent defaults and expand
+    /// `{date}` / `{server_location}` placeholders.
+    fn finalize(&mut self) -> Result<()> {
+        self.date = parse_date(self.custom_date.as_deref())?;
 
-        let archive_source_folder = raw
-            .archive_source_folder
-            .unwrap_or_else(|| format!("/home/tanlei678/cfmdc/his_quota_dir/{}/", date));
-        let archive_source_folder = replace_date_placeholder(&archive_source_folder, &date);
+        if self.archive_source_folder.is_empty() {
+            self.archive_source_folder =
+                format!("/home/tanlei678/cfmdc/his_quota_dir/{}/", self.date);
+        }
+        if self.archive_output.is_empty() {
+            self.archive_output = format!("/home/tanlei678/archive/{}.7z", self.date);
+        }
+        if self.files_source_folder.is_empty() {
+            self.files_source_folder =
+                format!("/home/tanlei678/cfmdc/his_quota_dir/{}/", self.date);
+        }
 
-        let archive_output = raw
-            .archive_output
-            .unwrap_or_else(|| format!("/home/tanlei678/archive/{}.7z", date));
-        let archive_output = replace_date_placeholder(&archive_output, &date);
+        let mut ctx = UploadContext::with_date(self.date.as_str());
+        ctx.insert("server_location", self.server_location.as_str());
 
-        let archive_password = raw.archive_password;
-        let require_archive = raw.require_archive.unwrap_or(true);
+        self.archive_source_folder = ctx.expand(&self.archive_source_folder);
+        self.archive_output = ctx.expand(&self.archive_output);
+        self.files_source_folder = ctx.expand(&self.files_source_folder);
+        for value in [
+            &mut self.file_pattern,
+            &mut self.archive_upload_path,
+            &mut self.files_upload_path,
+            &mut self.baidu_archive_upload_path,
+            &mut self.baidu_files_upload_path,
+            &mut self.cloud189_archive_upload_path,
+            &mut self.cloud189_files_upload_path,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *value = ctx.expand(value);
+        }
 
-        let files_source_folder = raw
-            .files_source_folder
-            .unwrap_or_else(|| format!("/home/tanlei678/cfmdc/his_quota_dir/{}/", date));
-        let files_source_folder = replace_date_placeholder(&files_source_folder, &date);
-
-        let file_pattern = raw
-            .file_pattern
-            .map(|p| replace_date_placeholder(&p, &date));
-
-        let archive_upload_path = raw.archive_upload_path.map(|p| {
-            let p = replace_date_placeholder(&p, &date);
-            replace_server_location_placeholder(&p, &server_location)
-        });
-        let files_upload_path = raw.files_upload_path.map(|p| {
-            let p = replace_date_placeholder(&p, &date);
-            replace_server_location_placeholder(&p, &server_location)
-        });
-
-        let chanify_enabled = raw.chanify_enabled.unwrap_or(false);
-        let chanify_token = raw.chanify_token;
-        let chanify_url = raw
-            .chanify_url
-            .unwrap_or_else(|| "https://chanify.estan.cn/v1/sender/".to_string());
-
-        let email_enabled = raw.email_enabled.unwrap_or(false);
-        let email_sender = raw.email_sender;
-        let email_password = raw.email_password;
-        let email_recipient = raw.email_recipient;
-
-        let pushgo_enabled = raw.pushgo_enabled.unwrap_or(false);
-        let pushgo_api_token = raw.pushgo_api_token;
-        let pushgo_hex_key = raw.pushgo_hex_key;
-        let pushgo_url = raw
-            .pushgo_url
-            .unwrap_or_else(|| "https://pushgo.estan.cn/message".to_string());
-        let pushgo_channel_id = raw.pushgo_channel_id;
-        let pushgo_password = raw.pushgo_password;
-        let pushgo_icon = raw.pushgo_icon;
-        let pushgo_image = raw.pushgo_image;
-
-        let baidu_enabled = raw.baidu_enabled.unwrap_or(false);
-        let baidu_app_key = raw.baidu_app_key;
-        let baidu_app_secret = raw.baidu_app_secret;
-        let baidu_config_path = raw.baidu_config_path;
-        let baidu_archive_upload_path = raw.baidu_archive_upload_path.map(|p| {
-            let p = replace_date_placeholder(&p, &date);
-            replace_server_location_placeholder(&p, &server_location)
-        });
-        let baidu_files_upload_path = raw.baidu_files_upload_path.map(|p| {
-            let p = replace_date_placeholder(&p, &date);
-            replace_server_location_placeholder(&p, &server_location)
-        });
-
-        let cloud189_enabled = raw.cloud189_enabled.unwrap_or(false);
-        let cloud189_config_path = raw.cloud189_config_path;
-        let cloud189_username = raw.cloud189_username;
-        let cloud189_password = raw.cloud189_password;
-        let cloud189_qr_login = raw.cloud189_qr_login.unwrap_or(false);
-        let cloud189_archive_upload_path = raw.cloud189_archive_upload_path.map(|p| {
-            let p = replace_date_placeholder(&p, &date);
-            replace_server_location_placeholder(&p, &server_location)
-        });
-        let cloud189_files_upload_path = raw.cloud189_files_upload_path.map(|p| {
-            let p = replace_date_placeholder(&p, &date);
-            replace_server_location_placeholder(&p, &server_location)
-        });
-
-        Ok(Config {
-            debug,
-            server_location,
-            date,
-            upload_mode,
-            archive_source_folder,
-            archive_output,
-            archive_password,
-            require_archive,
-            files_source_folder,
-            file_pattern,
-            archive_upload_path,
-            files_upload_path,
-            chanify_enabled,
-            chanify_token,
-            chanify_url,
-            email_enabled,
-            email_sender,
-            email_password,
-            email_recipient,
-            pushgo_enabled,
-            pushgo_api_token,
-            pushgo_hex_key,
-            pushgo_url,
-            pushgo_channel_id,
-            pushgo_password,
-            pushgo_icon,
-            pushgo_image,
-            baidu_enabled,
-            baidu_app_key,
-            baidu_app_secret,
-            baidu_config_path,
-            baidu_archive_upload_path,
-            baidu_files_upload_path,
-            cloud189_enabled,
-            cloud189_config_path,
-            cloud189_username,
-            cloud189_password,
-            cloud189_qr_login,
-            cloud189_archive_upload_path,
-            cloud189_files_upload_path,
-        })
+        Ok(())
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -332,10 +224,64 @@ fn parse_date(custom_date: Option<&str>) -> Result<String> {
     Ok(Utc::now().format("%Y%m%d").to_string())
 }
 
-fn replace_date_placeholder(s: &str, date: &str) -> String {
-    s.replace("{date}", date)
+fn default_server_location() -> String {
+    "Unknown Server".to_string()
 }
 
-fn replace_server_location_placeholder(s: &str, server_location: &str) -> String {
-    s.replace("{server_location}", server_location)
+fn default_upload_mode() -> UploadMode {
+    UploadMode::Archive
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_chanify_url() -> String {
+    "https://chanify.estan.cn/v1/sender/".to_string()
+}
+
+fn default_pushgo_url() -> String {
+    "https://pushgo.estan.cn/message".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finalize_expands_placeholders_and_defaults() {
+        let mut config: Config = toml::from_str(
+            r#"
+            server_location = "ServerA"
+            custom_date = "2026-06-11"
+            upload_mode = "hybrid"
+            archive_output = "/backup/{date}.7z"
+            archive_upload_path = "/cloud/{server_location}/{date}/"
+            "#,
+        )
+        .unwrap();
+        config.finalize().unwrap();
+
+        assert_eq!(config.date, "20260611");
+        assert_eq!(config.archive_output, "/backup/20260611.7z");
+        assert_eq!(
+            config.archive_upload_path.as_deref(),
+            Some("/cloud/ServerA/20260611/")
+        );
+        // 未配置的字段落到带日期的默认值
+        assert!(config.archive_source_folder.contains("20260611"));
+        assert!(config.require_archive);
+        assert_eq!(config.upload_mode, UploadMode::Hybrid);
+    }
+
+    #[test]
+    fn minimal_config_uses_defaults() {
+        let mut config: Config = toml::from_str("").unwrap();
+        config.finalize().unwrap();
+
+        assert_eq!(config.server_location, "Unknown Server");
+        assert_eq!(config.upload_mode, UploadMode::Archive);
+        assert!(!config.debug);
+        assert!(config.chanify_url.contains("chanify"));
+    }
 }

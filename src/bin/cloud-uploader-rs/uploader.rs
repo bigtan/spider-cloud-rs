@@ -4,7 +4,7 @@ use tracing::{info, warn};
 
 use spider_cloud_rs::uploader::{
     BaiduPanUploader, Cloud189Uploader, UploadAttempt, UploadContext,
-    UploadResult as EstanUploadResult, Uploader,
+    UploadResult as EstanUploadResult, UploadSkippedReason, Uploader,
 };
 
 use super::config::{Config, UploadMode};
@@ -132,6 +132,12 @@ impl UploadManagerWrapper {
         date_str: &str,
         mode: UploadMode,
     ) -> Result<UploadResult> {
+        if self.uploaders.is_empty() {
+            return Ok(UploadResult::skipped(
+                UploadSkippedReason::NoUploadersConfigured,
+            ));
+        }
+
         let ctx = UploadContext::with_date(date_str);
         let mut attempts = Vec::new();
 
@@ -152,7 +158,13 @@ impl UploadManagerWrapper {
             }
         }
 
-        Ok(UploadResult::from_attempts(attempts))
+        if attempts.is_empty() {
+            Ok(UploadResult::skipped(
+                UploadSkippedReason::NoDestinationConfigured,
+            ))
+        } else {
+            Ok(UploadResult::from_attempts(attempts))
+        }
     }
 
     /// Check if any uploaders are configured

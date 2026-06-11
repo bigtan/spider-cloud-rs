@@ -383,6 +383,8 @@ fn preprocess_image(image_bytes: &[u8]) -> Result<Array4<f32>> {
         .to_rgb8();
     let resized = keep_ratio_resize(&img);
 
+    // The exported model has a fixed three-window reshape internally, so the
+    // input batch must stay at CHUNK_COUNT even if later windows are padding.
     let mut data = Array4::<f32>::zeros((CHUNK_COUNT, CHANNELS, MASK_HEIGHT, CHUNK_WIDTH));
     for chunk in 0..CHUNK_COUNT {
         let left = CHUNK_STRIDE * chunk;
@@ -448,8 +450,8 @@ fn argmax_predictions(dims: &[usize], probabilities: &[f32]) -> Result<Vec<Vec<u
     }
 
     let mut preds = vec![vec![0; length]; batch];
-    for b in 0..batch {
-        for t in 0..length {
+    for (b, row) in preds.iter_mut().enumerate() {
+        for (t, slot) in row.iter_mut().enumerate() {
             let offset = (b * length + t) * classes;
             let mut best_idx = 0;
             let mut best_score = f32::NEG_INFINITY;
@@ -460,7 +462,7 @@ fn argmax_predictions(dims: &[usize], probabilities: &[f32]) -> Result<Vec<Vec<u
                     best_idx = cls;
                 }
             }
-            preds[b][t] = best_idx;
+            *slot = best_idx;
         }
     }
 
@@ -469,22 +471,22 @@ fn argmax_predictions(dims: &[usize], probabilities: &[f32]) -> Result<Vec<Vec<u
 
 fn ctc_decode_captcha(preds: &[Vec<usize>], vocab: &[String], captcha_length: usize) -> String {
     let mut decoded = String::new();
-    let Some(row) = preds.first() else {
-        return decoded;
-    };
-
-    let mut last = 0;
-    for &idx in row {
-        if idx != last && idx != 0 {
-            if let Some(token) = vocab.get(idx) {
+    // 依次解码每个滑动窗口的预测，而不是只取第一个窗口
+    for row in preds {
+        let mut last = 0;
+        for &idx in row {
+            if idx != last
+                && idx != 0
+                && let Some(token) = vocab.get(idx)
+            {
                 for ch in token.chars().filter(char::is_ascii_alphanumeric) {
                     if decoded.len() < captcha_length {
                         decoded.push(ch);
                     }
                 }
             }
+            last = idx;
         }
-        last = idx;
     }
 
     decoded
@@ -492,4 +494,24 @@ fn ctc_decode_captcha(preds: &[Vec<usize>], vocab: &[String], captcha_length: us
 
 fn is_token_error(error_code: u64) -> bool {
     matches!(error_code, 110 | 111)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ctc_decode_captcha;
+
+    #[test]
+    fn ctc_decode_collapses_repeats_and_spans_rows() {
+        let vocab: Vec<String> = vec!["".into(), "".into(), "a".into(), "b".into()];
+        // blank=0；重复索引折叠；第二个窗口的预测也应被解码
+        let preds = vec![vec![0, 2, 2, 0, 3], vec![2, 0, 2]];
+        assert_eq!(ctc_decode_captcha(&preds, &vocab, 6), "abaa");
+    }
+
+    #[test]
+    fn ctc_decode_caps_at_captcha_length() {
+        let vocab: Vec<String> = vec!["".into(), "".into(), "a".into()];
+        let preds = vec![vec![2, 0, 2, 0, 2, 0, 2]];
+        assert_eq!(ctc_decode_captcha(&preds, &vocab, 3), "aaa");
+    }
 }

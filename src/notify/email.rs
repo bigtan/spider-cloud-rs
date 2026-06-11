@@ -43,7 +43,16 @@ impl EmailNotifier {
     }
 
     pub fn send_html(&self, subject: &str, html_body: &str) -> Result<()> {
-        debug!("Building email message (HTML)");
+        self.send_with_content_type(subject, html_body, ContentType::TEXT_HTML)
+    }
+
+    fn send_with_content_type(
+        &self,
+        subject: &str,
+        body: &str,
+        content_type: ContentType,
+    ) -> Result<()> {
+        debug!("Building email message ({:?})", content_type);
         let from: Mailbox = self
             .sender
             .parse()
@@ -55,8 +64,8 @@ impl EmailNotifier {
             .from(from)
             .to(to)
             .subject(subject)
-            .header(ContentType::TEXT_HTML)
-            .body(html_body.to_string())?;
+            .header(content_type)
+            .body(body.to_string())?;
 
         let creds = Credentials::new(self.sender.clone(), self.password.clone());
 
@@ -85,39 +94,7 @@ impl Notifier for EmailNotifier {
     }
 
     fn send(&self, subject: &str, message: &str) -> Result<()> {
-        debug!("Building email message (plain text)");
-        let from: Mailbox = self
-            .sender
-            .parse()
-            .map_err(|err| anyhow::anyhow!("invalid EMAIL_SENDER '{}': {err}", self.sender))?;
-        let to: Mailbox = self.recipient.parse().map_err(|err| {
-            anyhow::anyhow!("invalid EMAIL_RECIPIENT '{}': {err}", self.recipient)
-        })?;
-        let email = Message::builder()
-            .from(from)
-            .to(to)
-            .subject(subject)
-            .header(ContentType::TEXT_PLAIN)
-            .body(message.to_string())?;
-
-        let creds = Credentials::new(self.sender.clone(), self.password.clone());
-
-        debug!("Connecting to SMTP server");
-        let mailer = match SmtpTransport::relay(&self.smtp_host) {
-            Ok(builder) => builder.credentials(creds).port(self.smtp_port).build(),
-            Err(e) => return Err(e.into()),
-        };
-
-        match mailer.send(&email) {
-            Ok(_) => {
-                info!("Email notification sent: {}", subject);
-                Ok(())
-            }
-            Err(e) => {
-                error!("Failed to send email notification: {:?}", e);
-                Err(e.into())
-            }
-        }
+        self.send_with_content_type(subject, message, ContentType::TEXT_PLAIN)
     }
 }
 

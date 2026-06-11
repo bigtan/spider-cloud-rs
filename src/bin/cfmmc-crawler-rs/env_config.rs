@@ -50,9 +50,10 @@ pub struct BaiduOcrConfig {
     pub url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptchaProvider {
+    #[default]
     Baidu,
     Onnx,
     OnnxThenBaidu,
@@ -132,12 +133,6 @@ impl Default for BaiduOcrConfig {
             secret_key: String::new(),
             url: default_baidu_ocr_url(),
         }
-    }
-}
-
-impl Default for CaptchaProvider {
-    fn default() -> Self {
-        Self::Baidu
     }
 }
 

@@ -1,111 +1,66 @@
+use anyhow::Result;
 use indexmap::IndexMap;
 use std::collections::HashMap;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use spider_cloud_rs::notify;
-use spider_cloud_rs::notify::Notifier as EsNotifier;
+use spider_cloud_rs::notify::Notifier as _;
 
-pub trait Notifier {
-    fn send(&self, date_str: &str, accounts_data: &IndexMap<String, HashMap<String, f64>>) -> bool;
+/// Per-account settlement values; `None` means extraction failed or no
+/// settlement data was published, which must not be rendered as zeros.
+pub type AccountsData = IndexMap<String, Option<HashMap<String, f64>>>;
+
+/// A notification channel with its CFMMC-specific message format.
+/// Wraps the shared library notifiers so each one is built once.
+pub enum AccountNotifier {
+    Chanify(notify::chanify::ChanifyNotifier),
+    Email(notify::email::EmailNotifier),
+    Pushgo(notify::pushgo::PushgoNotifier),
 }
 
-pub struct ChanifyNotifier {
-    pub chanify_url: String,
-    pub chanify_token: String,
-}
+impl AccountNotifier {
+    pub fn name(&self) -> &'static str {
+        match self {
+            AccountNotifier::Chanify(_) => "Chanify",
+            AccountNotifier::Email(_) => "Email",
+            AccountNotifier::Pushgo(_) => "Pushgo",
+        }
+    }
 
-impl Notifier for ChanifyNotifier {
-    fn send(&self, date_str: &str, accounts_data: &IndexMap<String, HashMap<String, f64>>) -> bool {
-        info!("Sending Chanify notification for date: {}", date_str);
-
-        let text = build_chanify_message(date_str, accounts_data);
-        let subject = format!("CFMMC 账户数据 - {}", date_str);
-        let notifier = notify::chanify::ChanifyNotifier::new(
-            self.chanify_url.clone(),
-            self.chanify_token.clone(),
+    pub fn send(&self, date_str: &str, accounts_data: &AccountsData) -> Result<()> {
+        info!(
+            "Sending {} notification for date: {}",
+            self.name(),
+            date_str
         );
-
-        match notifier.send(&subject, &text) {
-            Ok(()) => true,
-            Err(e) => {
-                error!("Error sending Chanify notification: {}", e);
-                false
-            }
+        match self {
+            AccountNotifier::Chanify(notifier) => notifier.send(
+                &format!("CFMMC 账户数据 - {date_str}"),
+                &build_chanify_message(date_str, accounts_data),
+            ),
+            AccountNotifier::Email(notifier) => notifier.send_html(
+                &format!("CFMMC 账户数据汇总 - {date_str}"),
+                &build_email_html(date_str, accounts_data),
+            ),
+            AccountNotifier::Pushgo(notifier) => notifier.send(
+                &format!("CFMMC 账户数据 - {date_str}"),
+                &build_pushgo_markdown(date_str, accounts_data),
+            ),
         }
     }
 }
 
-pub struct QQEmailNotifier {
-    pub sender: String,
-    pub password: String,
-    pub recipient: String,
-}
-
-impl Notifier for QQEmailNotifier {
-    fn send(&self, date_str: &str, accounts_data: &IndexMap<String, HashMap<String, f64>>) -> bool {
-        info!("Sending QQ Email notification for date: {}", date_str);
-
-        let html = build_email_html(date_str, accounts_data);
-        let subject = format!("CFMMC 账户数据汇总 - {}", date_str);
-        let notifier = notify::email::EmailNotifier::new(
-            self.sender.clone(),
-            self.password.clone(),
-            self.recipient.clone(),
-        );
-
-        match notifier.send_html(&subject, &html) {
-            Ok(()) => true,
-            Err(e) => {
-                error!("Error sending QQ Email notification: {}", e);
-                false
-            }
-        }
-    }
-}
-
-pub struct PushgoNotifier {
-    pub api_token: String,
-    pub url: String,
-    pub channel_id: String,
-    pub password: String,
-    pub hex_key: String,
-    pub icon: Option<String>,
-    pub image: Option<String>,
-}
-
-impl Notifier for PushgoNotifier {
-    fn send(&self, date_str: &str, accounts_data: &IndexMap<String, HashMap<String, f64>>) -> bool {
-        info!("Sending Pushgo notification for date: {}", date_str);
-
-        let markdown = build_pushgo_markdown(date_str, accounts_data);
-        let subject = format!("CFMMC 账户数据 - {}", date_str);
-        let notifier = notify::pushgo::PushgoNotifier::new(
-            self.url.clone(),
-            self.api_token.clone(),
-            self.hex_key.clone(),
-            self.channel_id.clone(),
-            self.password.clone(),
-            self.icon.clone(),
-            self.image.clone(),
-        );
-
-        match notifier.send(&subject, &markdown) {
-            Ok(()) => true,
-            Err(e) => {
-                error!("Error sending Pushgo notification: {}", e);
-                false
-            }
-        }
-    }
-}
-
-fn build_chanify_message(
-    date_str: &str,
-    accounts_data: &IndexMap<String, HashMap<String, f64>>,
-) -> String {
+fn build_chanify_message(date_str: &str, accounts_data: &AccountsData) -> String {
     let mut text = format!("📅 {date_str}\n════════════════════\n");
     for (account, data) in accounts_data {
         debug!("Processing account data: {}", account);
+
+        let Some(data) = data else {
+            text.push_str(&format!(
+                "👤 账户: {account}\n⚠️ 未获取到结算数据\n────────────────────\n"
+            ));
+            continue;
+        };
 
         let equity = data.get("客户权益").unwrap_or(&0.0);
         let closed_pnl = data.get("平仓盈亏").unwrap_or(&0.0);
@@ -142,12 +97,14 @@ fn build_chanify_message(
     text
 }
 
-fn build_pushgo_markdown(
-    date_str: &str,
-    accounts_data: &IndexMap<String, HashMap<String, f64>>,
-) -> String {
+fn build_pushgo_markdown(date_str: &str, accounts_data: &AccountsData) -> String {
     let mut body = format!("> {date_str}\n\n");
     for (account, data) in accounts_data {
+        let Some(data) = data else {
+            body.push_str(&format!("## 账户 {account}\n\n⚠️ 未获取到结算数据\n\n"));
+            continue;
+        };
+
         let equity = data.get("客户权益").unwrap_or(&0.0);
         let closed_pnl = data.get("平仓盈亏").unwrap_or(&0.0);
         let float_pnl = data.get("浮动盈亏").unwrap_or(&0.0);
@@ -161,10 +118,7 @@ fn build_pushgo_markdown(
     body
 }
 
-fn build_email_html(
-    date_str: &str,
-    accounts_data: &IndexMap<String, HashMap<String, f64>>,
-) -> String {
+fn build_email_html(date_str: &str, accounts_data: &AccountsData) -> String {
     let css_styles = r#"
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
@@ -210,6 +164,13 @@ fn build_email_html(
 
     let mut content = format!("{css_styles}<h2>CFMMC 账户数据汇总 - {date_str}</h2>");
     for (account, data) in accounts_data {
+        let Some(data) = data else {
+            content.push_str(&format!(
+                "<div class=\"summary-card\"><h3>账户: {account}</h3><p class=\"negative\">⚠️ 未获取到结算数据</p></div>"
+            ));
+            continue;
+        };
+
         let equity = data.get("客户权益").unwrap_or(&0.0);
         let closed_pnl = data.get("平仓盈亏").unwrap_or(&0.0);
         let float_pnl = data.get("浮动盈亏").unwrap_or(&0.0);

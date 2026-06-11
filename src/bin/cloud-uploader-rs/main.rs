@@ -6,7 +6,7 @@ mod utils;
 
 use anyhow::{Context, Result};
 use spider_cloud_rs::logging;
-use spider_cloud_rs::uploader::UploadAttempt;
+use spider_cloud_rs::uploader::{UploadAttempt, UploadSkippedReason};
 use std::path::Path;
 use tracing::{error, info, warn};
 
@@ -42,7 +42,8 @@ fn main() -> Result<()> {
             let result = handle_archive_mode(&config, &mut upload_manager)?;
             notification_manager.send_upload_result(&config.server_location, &config.date, &result);
 
-            if !result.overall_success {
+            ensure_upload_ok(&result, "Archive upload")?;
+            if has_failures(&result) {
                 anyhow::bail!("Archive upload failed");
             }
         }
@@ -57,7 +58,8 @@ fn main() -> Result<()> {
                 &merged_result,
             );
 
-            if !merged_result.overall_success {
+            ensure_upload_ok(&merged_result, "File upload")?;
+            if has_failures(&merged_result) {
                 anyhow::bail!("Some file uploads failed");
             }
         }
@@ -105,7 +107,8 @@ fn main() -> Result<()> {
                 &merged_result,
             );
 
-            if !merged_result.overall_success {
+            ensure_upload_ok(&merged_result, "Hybrid upload")?;
+            if has_failures(&merged_result) {
                 anyhow::bail!("Some uploads failed in hybrid mode");
             }
         }
@@ -138,12 +141,11 @@ fn handle_archive_mode(
             if config.require_archive {
                 anyhow::bail!("Archiving failed and is required: {}", e);
             } else {
-                warn!("Archiving failed but not required, skipping upload");
-                // Return empty result
-                return Ok(UploadResult::from_attempts(vec![UploadAttempt::failure(
-                    "Archive creation",
-                    e.to_string(),
-                )]));
+                // require_archive=false 时真正容忍：返回空结果，不计为失败
+                warn!("Archiving failed but not required, skipping archive upload");
+                return Ok(UploadResult::skipped(
+                    UploadSkippedReason::OptionalArchiveFailed,
+                ));
             }
         }
     }
@@ -184,7 +186,9 @@ fn handle_files_mode(
 
     if files.is_empty() {
         warn!("No files found to upload");
-        return Ok(vec![]);
+        return Ok(vec![UploadResult::skipped(
+            UploadSkippedReason::NoFilesFound,
+        )]);
     }
 
     info!("Found {} file(s) to upload", files.len());
@@ -204,6 +208,7 @@ fn handle_files_mode(
                 results.push(UploadResult {
                     overall_success: false,
                     attempts: vec![UploadAttempt::failure(file_str.clone(), e.to_string())],
+                    skipped_reason: None,
                 });
             }
         }
@@ -242,11 +247,38 @@ fn upload_file(
 ) -> Result<UploadResult> {
     if !upload_manager.has_uploaders() {
         warn!("No cloud uploaders configured, skipping upload");
-        return Ok(UploadResult::empty());
+        return Ok(UploadResult::skipped(
+            UploadSkippedReason::NoUploadersConfigured,
+        ));
     }
 
     // Upload file
     upload_manager.upload_file(file_path, date_str, mode)
+}
+
+/// A result with no attempts (nothing to upload / archive skipped) is not a failure.
+fn has_failures(result: &UploadResult) -> bool {
+    result.attempts.iter().any(|attempt| !attempt.success)
+}
+
+fn ensure_upload_ok(result: &UploadResult, context: &str) -> Result<()> {
+    match &result.skipped_reason {
+        Some(UploadSkippedReason::NoUploadersConfigured) => {
+            anyhow::bail!("{context}: no cloud uploaders configured")
+        }
+        Some(UploadSkippedReason::NoDestinationConfigured) => {
+            anyhow::bail!("{context}: no destination path configured for this upload mode")
+        }
+        Some(UploadSkippedReason::OptionalArchiveFailed | UploadSkippedReason::NoFilesFound)
+        | None => Ok(()),
+    }
+}
+
+fn is_config_skip(reason: &UploadSkippedReason) -> bool {
+    matches!(
+        reason,
+        UploadSkippedReason::NoUploadersConfigured | UploadSkippedReason::NoDestinationConfigured
+    )
 }
 
 /// Merge multiple upload results into one
@@ -256,10 +288,64 @@ fn merge_upload_results(results: Vec<UploadResult>) -> UploadResult {
     }
 
     let mut attempts = Vec::new();
+    let mut skipped_reason = None;
 
     for result in results {
+        if let Some(reason) = result.skipped_reason
+            && skipped_reason
+                .as_ref()
+                .map(|current| !is_config_skip(current) && is_config_skip(&reason))
+                .unwrap_or(true)
+        {
+            skipped_reason = Some(reason);
+        }
         attempts.extend(result.attempts);
     }
 
-    UploadResult::from_attempts(attempts)
+    if attempts.is_empty() {
+        if let Some(reason) = skipped_reason {
+            UploadResult::skipped(reason)
+        } else {
+            UploadResult::empty()
+        }
+    } else {
+        UploadResult::from_attempts(attempts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_upload_ok_rejects_config_skips() {
+        let no_uploaders = UploadResult::skipped(UploadSkippedReason::NoUploadersConfigured);
+        assert!(ensure_upload_ok(&no_uploaders, "upload").is_err());
+
+        let no_dest = UploadResult::skipped(UploadSkippedReason::NoDestinationConfigured);
+        assert!(ensure_upload_ok(&no_dest, "upload").is_err());
+    }
+
+    #[test]
+    fn ensure_upload_ok_allows_business_skips() {
+        let optional_archive = UploadResult::skipped(UploadSkippedReason::OptionalArchiveFailed);
+        assert!(ensure_upload_ok(&optional_archive, "upload").is_ok());
+
+        let no_files = UploadResult::skipped(UploadSkippedReason::NoFilesFound);
+        assert!(ensure_upload_ok(&no_files, "upload").is_ok());
+    }
+
+    #[test]
+    fn merge_upload_results_prioritizes_config_skip() {
+        let merged = merge_upload_results(vec![
+            UploadResult::skipped(UploadSkippedReason::OptionalArchiveFailed),
+            UploadResult::skipped(UploadSkippedReason::NoDestinationConfigured),
+        ]);
+
+        assert_eq!(
+            merged.skipped_reason,
+            Some(UploadSkippedReason::NoDestinationConfigured)
+        );
+        assert!(ensure_upload_ok(&merged, "upload").is_err());
+    }
 }

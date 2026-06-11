@@ -34,55 +34,6 @@ impl UploadContext {
     }
 }
 
-pub struct UploadManager {
-    uploaders: Vec<(Box<dyn Uploader>, String)>,
-}
-
-impl UploadManager {
-    pub fn new() -> Self {
-        Self {
-            uploaders: Vec::new(),
-        }
-    }
-
-    pub fn add<U>(&mut self, uploader: U, dest_path: impl Into<String>) -> &mut Self
-    where
-        U: Uploader + 'static,
-    {
-        self.uploaders.push((Box::new(uploader), dest_path.into()));
-        self
-    }
-
-    pub fn has_uploaders(&self) -> bool {
-        !self.uploaders.is_empty()
-    }
-
-    pub fn upload_file(&mut self, file_path: &str, ctx: &UploadContext) -> Result<UploadResult> {
-        if self.uploaders.is_empty() {
-            return Ok(UploadResult::empty());
-        }
-
-        let mut results = Vec::with_capacity(self.uploaders.len());
-
-        for (uploader, dest_path) in &mut self.uploaders {
-            let expanded_path = ctx.expand(dest_path);
-            let name = uploader.name().to_string();
-            match uploader.upload(file_path, &expanded_path) {
-                Ok(()) => results.push(UploadAttempt::success(name)),
-                Err(err) => results.push(UploadAttempt::failure(name, err.to_string())),
-            }
-        }
-
-        Ok(UploadResult::from_attempts(results))
-    }
-}
-
-impl Default for UploadManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadAttempt {
     pub name: String,
@@ -109,9 +60,18 @@ impl UploadAttempt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UploadSkippedReason {
+    NoUploadersConfigured,
+    NoDestinationConfigured,
+    OptionalArchiveFailed,
+    NoFilesFound,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadResult {
     pub overall_success: bool,
     pub attempts: Vec<UploadAttempt>,
+    pub skipped_reason: Option<UploadSkippedReason>,
 }
 
 impl UploadResult {
@@ -119,6 +79,15 @@ impl UploadResult {
         Self {
             overall_success: false,
             attempts: Vec::new(),
+            skipped_reason: None,
+        }
+    }
+
+    pub fn skipped(reason: UploadSkippedReason) -> Self {
+        Self {
+            overall_success: false,
+            attempts: Vec::new(),
+            skipped_reason: Some(reason),
         }
     }
 
@@ -128,8 +97,45 @@ impl UploadResult {
         Self {
             overall_success,
             attempts,
+            skipped_reason: None,
         }
     }
+}
+
+/// Write a credentials file with owner-only permissions on Unix; the default
+/// umask would otherwise leave session secrets world-readable.
+pub(crate) fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(data)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, data)
+    }
+}
+
+/// Read until `buf` is full or EOF. `Read::read` may return short reads even
+/// mid-file, which would silently desync fixed-size chunk boundaries.
+pub(crate) fn read_full(reader: &mut impl std::io::Read, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(filled)
 }
 
 fn expand_placeholders(template: &str, vars: &HashMap<String, String>) -> String {
@@ -176,36 +182,33 @@ pub use cloud189::Cloud189Uploader;
 mod tests {
     use super::*;
 
-    struct FakeUploader {
-        name: String,
-        uploads: Vec<(String, String)>,
-        succeed: bool,
+    /// Reader that returns at most 3 bytes per read call to simulate short reads.
+    struct ShortReader {
+        data: Vec<u8>,
+        pos: usize,
     }
 
-    impl FakeUploader {
-        fn new(name: &str, succeed: bool) -> Self {
-            Self {
-                name: name.to_string(),
-                uploads: Vec::new(),
-                succeed,
-            }
+    impl std::io::Read for ShortReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = (self.data.len() - self.pos).min(buf.len()).min(3);
+            buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
         }
     }
 
-    impl Uploader for FakeUploader {
-        fn name(&self) -> &str {
-            &self.name
-        }
-
-        fn upload(&mut self, file_path: &str, dest_path: &str) -> Result<()> {
-            self.uploads
-                .push((file_path.to_string(), dest_path.to_string()));
-            if self.succeed {
-                Ok(())
-            } else {
-                anyhow::bail!("{} failed", self.name);
-            }
-        }
+    #[test]
+    fn read_full_fills_buffer_across_short_reads() {
+        let mut reader = ShortReader {
+            data: (0..10).collect(),
+            pos: 0,
+        };
+        let mut buf = [0u8; 8];
+        assert_eq!(read_full(&mut reader, &mut buf).unwrap(), 8);
+        assert_eq!(&buf, &[0, 1, 2, 3, 4, 5, 6, 7]);
+        let mut rest = [0u8; 8];
+        assert_eq!(read_full(&mut reader, &mut rest).unwrap(), 2);
+        assert_eq!(&rest[..2], &[8, 9]);
     }
 
     #[test]
@@ -225,37 +228,25 @@ mod tests {
     }
 
     #[test]
-    fn upload_manager_reports_results() {
-        let mut manager = UploadManager::new();
-        let mut ctx = UploadContext::new();
-        ctx.insert("date", "20250203");
-
-        manager.add(FakeUploader::new("A", true), "/x/{date}");
-        manager.add(FakeUploader::new("B", false), "/y/{date}");
-
-        let result = manager.upload_file("file.tar.zst", &ctx).unwrap();
+    fn upload_result_aggregates_attempts() {
+        let result = UploadResult::from_attempts(vec![
+            UploadAttempt::success("A"),
+            UploadAttempt::failure("B", "B failed"),
+        ]);
         assert!(!result.overall_success);
         assert_eq!(result.attempts.len(), 2);
-        assert_eq!(result.attempts[0].name, "A");
         assert!(result.attempts[0].success);
-        assert_eq!(result.attempts[1].name, "B");
         assert!(!result.attempts[1].success);
         assert!(result.attempts[1].error.is_some());
-    }
 
-    #[test]
-    fn upload_manager_continues_after_failure() {
-        let mut manager = UploadManager::new();
-        let ctx = UploadContext::with_date("20250203");
+        let all_ok = UploadResult::from_attempts(vec![UploadAttempt::success("A")]);
+        assert!(all_ok.overall_success);
 
-        manager.add(FakeUploader::new("A", false), "/x/{date}");
-        manager.add(FakeUploader::new("B", true), "/y/{date}");
-
-        let result = manager.upload_file("file.tar.zst", &ctx).unwrap();
-        assert_eq!(result.attempts.len(), 2);
-        assert_eq!(result.attempts[0].name, "A");
-        assert!(!result.attempts[0].success);
-        assert_eq!(result.attempts[1].name, "B");
-        assert!(result.attempts[1].success);
+        assert!(!UploadResult::empty().overall_success);
+        let skipped = UploadResult::skipped(UploadSkippedReason::NoUploadersConfigured);
+        assert_eq!(
+            skipped.skipped_reason,
+            Some(UploadSkippedReason::NoUploadersConfigured)
+        );
     }
 }

@@ -3,10 +3,14 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::{debug, error, info, warn};
 
+/// Extract settlement values from the workbook.
+///
+/// Returns `None` when the workbook or sheet cannot be read at all, so
+/// callers can distinguish "extraction failed" from "values are zero".
 pub fn extract_daily_values<P: AsRef<Path>>(
     workbook_path: P,
     sheet_name: &str,
-) -> (HashMap<String, f64>, usize) {
+) -> Option<(HashMap<String, f64>, usize)> {
     let path = workbook_path.as_ref();
     info!(
         "Extracting daily values from: {:?}, sheet: {}",
@@ -28,7 +32,7 @@ pub fn extract_daily_values<P: AsRef<Path>>(
         }
         Err(e) => {
             error!("Failed to open workbook: {}", e);
-            return (result, found_keys);
+            return None;
         }
     };
 
@@ -43,7 +47,7 @@ pub fn extract_daily_values<P: AsRef<Path>>(
         }
         Err(e) => {
             error!("Failed to access sheet '{}': {}", sheet_name, e);
-            return (result, found_keys);
+            return None;
         }
     };
 
@@ -57,7 +61,7 @@ pub fn extract_daily_values<P: AsRef<Path>>(
                         "Extraction completed. Found {} keys: {:?}",
                         found_keys, result
                     );
-                    return (result, found_keys);
+                    return Some((result, found_keys));
                 }
 
                 if keys.contains(&s.as_str()) {
@@ -101,5 +105,5 @@ pub fn extract_daily_values<P: AsRef<Path>>(
         "Extraction completed. Found {} keys: {:?}",
         found_keys, result
     );
-    (result, found_keys)
+    Some((result, found_keys))
 }
