@@ -60,9 +60,18 @@ impl UploadAttempt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UploadSkippedReason {
+    NoUploadersConfigured,
+    NoDestinationConfigured,
+    OptionalArchiveFailed,
+    NoFilesFound,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadResult {
     pub overall_success: bool,
     pub attempts: Vec<UploadAttempt>,
+    pub skipped_reason: Option<UploadSkippedReason>,
 }
 
 impl UploadResult {
@@ -70,6 +79,15 @@ impl UploadResult {
         Self {
             overall_success: false,
             attempts: Vec::new(),
+            skipped_reason: None,
+        }
+    }
+
+    pub fn skipped(reason: UploadSkippedReason) -> Self {
+        Self {
+            overall_success: false,
+            attempts: Vec::new(),
+            skipped_reason: Some(reason),
         }
     }
 
@@ -79,6 +97,7 @@ impl UploadResult {
         Self {
             overall_success,
             attempts,
+            skipped_reason: None,
         }
     }
 }
@@ -224,5 +243,10 @@ mod tests {
         assert!(all_ok.overall_success);
 
         assert!(!UploadResult::empty().overall_success);
+        let skipped = UploadResult::skipped(UploadSkippedReason::NoUploadersConfigured);
+        assert_eq!(
+            skipped.skipped_reason,
+            Some(UploadSkippedReason::NoUploadersConfigured)
+        );
     }
 }
