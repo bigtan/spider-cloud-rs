@@ -4,6 +4,7 @@ use super::config::Config;
 use super::uploader::UploadResult;
 use spider_cloud_rs::notify;
 use spider_cloud_rs::notify::Notifier as EsNotifier;
+use spider_cloud_rs::uploader::UploadAttempt;
 
 /// Notification manager that coordinates multiple notification services
 pub struct NotificationManager {
@@ -84,35 +85,25 @@ impl NotificationManager {
         }
     }
 
-    /// Send notification to all configured channels
-    pub fn send(&self, subject: &str, message: &str) -> bool {
-        let mut success = false;
-
-        if let Some(notifier) = &self.chanify {
-            let formatted = format_chanify_message(subject, message);
-            match notifier.send(subject, &formatted) {
-                Ok(()) => success = true,
-                Err(err) => warn!("Chanify notification failed: {}", err),
-            }
+    /// Send pre-formatted bodies to every configured channel
+    fn dispatch(&self, subject: &str, chanify_text: &str, email_html: &str, pushgo_md: &str) {
+        if let Some(notifier) = &self.chanify
+            && let Err(err) = notifier.send(subject, chanify_text)
+        {
+            warn!("Chanify notification failed: {}", err);
         }
 
-        if let Some(notifier) = &self.email {
-            let html = format_email_html(subject, message);
-            match notifier.send_html(subject, &html) {
-                Ok(()) => success = true,
-                Err(err) => warn!("Email notification failed: {}", err),
-            }
+        if let Some(notifier) = &self.email
+            && let Err(err) = notifier.send_html(subject, email_html)
+        {
+            warn!("Email notification failed: {}", err);
         }
 
-        if let Some(notifier) = &self.pushgo {
-            let markdown = format_pushgo_markdown(subject, message);
-            match notifier.send(subject, &markdown) {
-                Ok(()) => success = true,
-                Err(err) => warn!("Pushgo notification failed: {}", err),
-            }
+        if let Some(notifier) = &self.pushgo
+            && let Err(err) = notifier.send(subject, pushgo_md)
+        {
+            warn!("Pushgo notification failed: {}", err);
         }
-
-        success
     }
 
     /// Send upload completion notification
@@ -121,119 +112,153 @@ impl NotificationManager {
             return;
         }
 
-        let result_str = result
-            .attempts
-            .iter()
-            .map(|attempt| {
-                if attempt.success {
-                    format!("{}: 成功", attempt.name)
-                } else if let Some(error) = &attempt.error {
-                    format!("{}: 失败 ({})", attempt.name, error)
-                } else {
-                    format!("{}: 失败", attempt.name)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let (subject, message) = if result.overall_success {
-            (
-                format!("[{}] 数据上传完成 - {}", server_location, date_str),
-                format!(
-                    "{}数据上传完成\n服务器: {}\n{}",
-                    date_str, server_location, result_str
-                ),
-            )
-        } else {
-            (
-                format!("[{}] 数据上传部分失败 - {}", server_location, date_str),
-                format!(
-                    "{}数据上传部分失败\n服务器: {}\n{}",
-                    date_str, server_location, result_str
-                ),
-            )
+        let report = UploadReport {
+            server_location,
+            date_str,
+            success: result.overall_success,
+            attempts: &result.attempts,
         };
 
-        self.send(&subject, &message);
+        let subject = format!(
+            "[{}] 数据上传{} - {}",
+            server_location,
+            report.status_label(),
+            date_str
+        );
+        self.dispatch(
+            &subject,
+            &chanify_upload_message(&report),
+            &email_upload_html(&subject, &report),
+            &pushgo_upload_markdown(&report),
+        );
     }
 
     /// Send archive failure notification
     pub fn send_archive_failure(&self, server_location: &str, date_str: &str, error: &str) {
         let subject = format!("[{}] 数据打包失败 - {}", server_location, date_str);
-        let message = format!(
-            "{}数据打包失败\n服务器: {}\n错误: {}",
-            date_str, server_location, error
+        let headline = format!("{date_str}数据打包失败");
+
+        let chanify_text =
+            format!("❌ {headline}\n\n🖥️ 服务器: {server_location}\n\n错误: {error}");
+        let email_html = email_shell(
+            &subject,
+            "#FF5252",
+            "❌",
+            &format!(
+                "<p><strong>{headline}</strong></p>\
+                 <p>🖥️ <strong>服务器:</strong> {server_location}</p>\
+                 <p><strong>错误:</strong> {error}</p>"
+            ),
         );
-        self.send(&subject, &message);
+        let pushgo_md = format!(
+            "> {headline}\n\n- **服务器**: {server_location}\n- **状态**: 失败\n\n**错误**\n\n{error}\n"
+        );
+
+        self.dispatch(&subject, &chanify_text, &email_html, &pushgo_md);
     }
 }
 
-fn format_chanify_message(subject: &str, message: &str) -> String {
-    let mut formatted = message.to_string();
+/// Structured upload outcome handed to the per-channel formatters,
+/// instead of round-tripping through a formatted string.
+struct UploadReport<'a> {
+    server_location: &'a str,
+    date_str: &'a str,
+    success: bool,
+    attempts: &'a [UploadAttempt],
+}
 
-    if subject.contains("失败") {
-        formatted = format!("❌ {}", formatted);
-    } else if subject.contains("完成") || subject.contains("成功") {
-        formatted = format!("✅ {}", formatted);
+impl UploadReport<'_> {
+    fn status_label(&self) -> &'static str {
+        if self.success { "完成" } else { "部分失败" }
+    }
+
+    fn headline(&self) -> String {
+        format!("{}数据上传{}", self.date_str, self.status_label())
+    }
+}
+
+fn attempt_status(attempt: &UploadAttempt) -> String {
+    if attempt.success {
+        "成功".to_string()
+    } else if let Some(error) = &attempt.error {
+        format!("失败 ({})", error)
     } else {
-        formatted = format!("📢 {}", formatted);
+        "失败".to_string()
     }
-
-    formatted = formatted.replace('\n', "\n\n");
-    formatted = formatted.replace("服务器:", "🖥️ 服务器:");
-    formatted = formatted.replace("成功", "✅ 成功");
-    formatted = formatted.replace("失败", "❌ 失败");
-
-    formatted
 }
 
-fn format_email_html(subject: &str, message: &str) -> String {
-    let (theme_color, status_icon) = if subject.contains("失败") {
-        ("#FF5252", "❌")
-    } else if subject.contains("完成") || subject.contains("成功") {
+fn chanify_upload_message(report: &UploadReport) -> String {
+    let icon = if report.success { "✅" } else { "❌" };
+    let mut text = format!(
+        "{icon} {}\n\n🖥️ 服务器: {}\n",
+        report.headline(),
+        report.server_location
+    );
+    for attempt in report.attempts {
+        let icon = if attempt.success { "✅" } else { "❌" };
+        text.push_str(&format!(
+            "\n{}: {} {}\n",
+            attempt.name,
+            icon,
+            attempt_status(attempt)
+        ));
+    }
+    text
+}
+
+fn pushgo_upload_markdown(report: &UploadReport) -> String {
+    let status = if report.success { "成功" } else { "失败" };
+    let mut body = format!(
+        "> {}\n\n- **服务器**: {}\n- **状态**: {}\n\n## 上传结果\n\n| 服务 | 状态 |\n| --- | --- |\n",
+        report.headline(),
+        report.server_location,
+        status
+    );
+    for attempt in report.attempts {
+        body.push_str(&format!(
+            "| {} | {} |\n",
+            attempt.name,
+            attempt_status(attempt)
+        ));
+    }
+    body
+}
+
+fn email_upload_html(subject: &str, report: &UploadReport) -> String {
+    let (theme_color, status_icon) = if report.success {
         ("#4CAF50", "✅")
     } else {
-        ("#2196F3", "ℹ️")
+        ("#FF5252", "❌")
     };
 
-    let lines: Vec<&str> = message.lines().collect();
-    let mut date_str = String::new();
-    let mut server_location = String::new();
-    let mut results = Vec::new();
-
-    for line in lines {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        if line.contains("数据") && (line.contains("上传") || line.contains("打包")) {
-            date_str = line.to_string();
-        } else if line.contains("服务器:") {
-            server_location = line.replace("服务器:", "").trim().to_string();
-        } else if line.contains(':')
-            && (line.contains("成功") || line.contains("失败"))
-            && let Some((service, status)) = line.split_once(':')
-        {
-            let status_class = if status.contains("成功") {
-                "status-success"
-            } else {
-                "status-fail"
-            };
-            let status_icon = if status.contains("成功") {
-                "✅"
-            } else {
-                "❌"
-            };
-            results.push((
-                service.trim().to_string(),
-                status.trim().to_string(),
-                status_class,
-                status_icon,
-            ));
-        }
+    let mut content = format!(
+        "<p><strong>{}</strong></p>\
+         <p>🖥️ <strong>服务器:</strong> {}</p>\
+         <h3>上传结果</h3><table><tr><th>服务</th><th>状态</th></tr>",
+        report.headline(),
+        report.server_location
+    );
+    for attempt in report.attempts {
+        let (class, icon) = if attempt.success {
+            ("status-success", "✅")
+        } else {
+            ("status-fail", "❌")
+        };
+        content.push_str(&format!(
+            "<tr><td>{}</td><td class=\"{}\">{} {}</td></tr>",
+            attempt.name,
+            class,
+            icon,
+            attempt_status(attempt)
+        ));
     }
+    content.push_str("</table>");
 
-    let mut html = format!(
+    email_shell(subject, theme_color, status_icon, &content)
+}
+
+fn email_shell(subject: &str, theme_color: &str, status_icon: &str, body_html: &str) -> String {
+    format!(
         r#"<!DOCTYPE html>
 <html>
 <head>
@@ -249,7 +274,7 @@ fn format_email_html(subject: &str, message: &str) -> String {
             border-radius: 8px; overflow: hidden; box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }}
         .header {{
-            background-color: {}; color: white;
+            background-color: {theme_color}; color: white;
             padding: 20px; text-align: center;
         }}
         .content {{ padding: 20px; }}
@@ -271,36 +296,9 @@ fn format_email_html(subject: &str, message: &str) -> String {
 <body>
     <div class="container">
         <div class="header">
-            <h1>{} {}</h1>
+            <h1>{status_icon} {subject}</h1>
         </div>
-        <div class="content">"#,
-        theme_color, status_icon, subject
-    );
-
-    if !date_str.is_empty() {
-        html.push_str(&format!("<p><strong>{}</strong></p>", date_str));
-    }
-
-    if !server_location.is_empty() {
-        html.push_str(&format!(
-            "<p>🖥️ <strong>服务器:</strong> {}</p>",
-            server_location
-        ));
-    }
-
-    if !results.is_empty() {
-        html.push_str("<h3>上传结果</h3><table><tr><th>服务</th><th>状态</th></tr>");
-        for (service, status, status_class, status_icon) in results {
-            html.push_str(&format!(
-                "<tr><td>{}</td><td class=\"{}\">{} {}</td></tr>",
-                service, status_class, status_icon, status
-            ));
-        }
-        html.push_str("</table>");
-    }
-
-    html.push_str(
-        r#"
+        <div class="content">{body_html}
         </div>
         <div class="footer">
             <p>此邮件由系统自动生成，请勿回复</p>
@@ -308,69 +306,53 @@ fn format_email_html(subject: &str, message: &str) -> String {
         </div>
     </div>
 </body>
-</html>"#,
-    );
-
-    html
+</html>"#
+    )
 }
 
-fn format_pushgo_markdown(subject: &str, message: &str) -> String {
-    let mut date_str = String::new();
-    let mut server_location = String::new();
-    let mut results = Vec::new();
-    let mut other_lines = Vec::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    for line in message.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if line.contains("数据") && (line.contains("上传") || line.contains("打包")) {
-            date_str = line.to_string();
-        } else if line.starts_with("服务器:") {
-            server_location = line.replace("服务器:", "").trim().to_string();
-        } else if line.contains(':') && (line.contains("成功") || line.contains("失败")) {
-            if let Some((service, status)) = line.split_once(':') {
-                results.push((service.trim().to_string(), status.trim().to_string()));
-            }
-        } else {
-            other_lines.push(line.to_string());
+    fn sample_report<'a>(attempts: &'a [UploadAttempt]) -> UploadReport<'a> {
+        UploadReport {
+            server_location: "ServerA",
+            date_str: "20260611",
+            success: false,
+            attempts,
         }
     }
 
-    let mut body = String::new();
-
-    if !date_str.is_empty() {
-        body.push_str(&format!("> {}\n\n", date_str));
+    #[test]
+    fn chanify_message_includes_each_attempt() {
+        let attempts = vec![
+            UploadAttempt::success("BaiduPan"),
+            UploadAttempt::failure("Cloud189", "timeout"),
+        ];
+        let text = chanify_upload_message(&sample_report(&attempts));
+        assert!(text.contains("❌ 20260611数据上传部分失败"));
+        assert!(text.contains("🖥️ 服务器: ServerA"));
+        assert!(text.contains("BaiduPan: ✅ 成功"));
+        assert!(text.contains("Cloud189: ❌ 失败 (timeout)"));
     }
 
-    if !server_location.is_empty() {
-        body.push_str(&format!("- **服务器**: {}\n", server_location));
+    #[test]
+    fn pushgo_markdown_renders_result_table() {
+        let attempts = vec![UploadAttempt::success("BaiduPan")];
+        let md = pushgo_upload_markdown(&sample_report(&attempts));
+        assert!(md.contains("| 服务 | 状态 |"));
+        assert!(md.contains("| BaiduPan | 成功 |"));
     }
 
-    let status_label = if subject.contains("失败") {
-        "失败"
-    } else if subject.contains("完成") || subject.contains("成功") {
-        "成功"
-    } else {
-        "通知"
-    };
-    body.push_str(&format!("- **状态**: {}\n", status_label));
-
-    if !results.is_empty() {
-        body.push_str("\n## 上传结果\n\n| 服务 | 状态 |\n| --- | --- |\n");
-        for (service, status) in results {
-            body.push_str(&format!("| {} | {} |\n", service, status));
-        }
+    #[test]
+    fn email_html_renders_status_classes() {
+        let attempts = vec![
+            UploadAttempt::success("BaiduPan"),
+            UploadAttempt::failure("Cloud189", "timeout"),
+        ];
+        let html = email_upload_html("subject", &sample_report(&attempts));
+        assert!(html.contains("status-success"));
+        assert!(html.contains("status-fail"));
+        assert!(html.contains("失败 (timeout)"));
     }
-
-    if !other_lines.is_empty() {
-        body.push_str("\n---\n\n**补充信息**\n\n");
-        for line in other_lines {
-            body.push_str(&format!("- {}\n", line));
-        }
-    }
-
-    body
 }
