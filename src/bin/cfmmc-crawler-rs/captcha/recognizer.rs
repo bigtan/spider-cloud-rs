@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use image::{RgbImage, imageops::FilterType};
+use image::imageops::FilterType;
 use ndarray::Array4;
 use ort::{session::Session, value::TensorRef};
 use reqwest::blocking::Client;
@@ -14,11 +14,9 @@ use url::Url;
 const TOKEN_URL: &str = "https://aip.baidubce.com/oauth/2.0/token";
 const DEFAULT_OCR_URL: &str = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic";
 const TOKEN_EXPIRY_SKEW: Duration = Duration::from_secs(300);
-const MASK_HEIGHT: usize = 32;
-const MASK_WIDTH: usize = 804;
-const CHUNK_WIDTH: usize = 300;
-const CHUNK_STRIDE: usize = 252;
-const CHUNK_COUNT: usize = 3;
+// PP-OCRv6 rec preprocessing spec (from inference.yml: RecResizeImg image_shape [3, 48, 320]).
+const REC_HEIGHT: usize = 48;
+const REC_MAX_WIDTH: usize = 320;
 const CHANNELS: usize = 3;
 
 pub trait CaptchaRecognizer {
@@ -381,58 +379,45 @@ fn preprocess_image(image_bytes: &[u8]) -> Result<Array4<f32>> {
     let img = image::load_from_memory(image_bytes)
         .context("Failed to decode CAPTCHA image")?
         .to_rgb8();
-    let resized = keep_ratio_resize(&img);
 
-    // The exported model has a fixed three-window reshape internally, so the
-    // input batch must stay at CHUNK_COUNT even if later windows are padding.
-    let mut data = Array4::<f32>::zeros((CHUNK_COUNT, CHANNELS, MASK_HEIGHT, CHUNK_WIDTH));
-    for chunk in 0..CHUNK_COUNT {
-        let left = CHUNK_STRIDE * chunk;
-        for y in 0..MASK_HEIGHT {
-            for x in 0..CHUNK_WIDTH {
-                let pixel = resized.get_pixel((left + x) as u32, y as u32).0;
-                data[[chunk, 0, y, x]] = f32::from(pixel[2]) / 255.0;
-                data[[chunk, 1, y, x]] = f32::from(pixel[1]) / 255.0;
-                data[[chunk, 2, y, x]] = f32::from(pixel[0]) / 255.0;
-            }
+    // PP-OCRv6 RecResizeImg: keep aspect ratio, resize to height 48, cap width at
+    // 320, then right-pad. Normalization is (pixel/255 - 0.5) / 0.5 -> [-1, 1].
+    let (width, height) = img.dimensions();
+    let ratio = width as f32 / height as f32;
+    let resized_w = ((REC_HEIGHT as f32 * ratio).ceil() as usize).clamp(1, REC_MAX_WIDTH);
+    let resized = image::imageops::resize(
+        &img,
+        resized_w as u32,
+        REC_HEIGHT as u32,
+        FilterType::Triangle,
+    );
+
+    // The padded region stays 0.0: PaddleOCR pads the already-normalized array with
+    // zeros (which is distinct from a normalized black pixel at -1.0).
+    let mut data = Array4::<f32>::zeros((1, CHANNELS, REC_HEIGHT, REC_MAX_WIDTH));
+    for y in 0..REC_HEIGHT {
+        for x in 0..resized_w {
+            // image crate yields RGB; the model expects BGR channel order.
+            let pixel = resized.get_pixel(x as u32, y as u32).0;
+            data[[0, 0, y, x]] = normalize(pixel[2]);
+            data[[0, 1, y, x]] = normalize(pixel[1]);
+            data[[0, 2, y, x]] = normalize(pixel[0]);
         }
     }
 
     Ok(data)
 }
 
-fn keep_ratio_resize(img: &RgbImage) -> RgbImage {
-    let (width, height) = img.dimensions();
-    let cur_ratio = width as f32 / height as f32;
-    let max_ratio = MASK_WIDTH as f32 / MASK_HEIGHT as f32;
-    let target_width = if cur_ratio > max_ratio {
-        MASK_WIDTH
-    } else {
-        (MASK_HEIGHT as f32 * cur_ratio) as usize
-    }
-    .max(1);
-
-    let resized = image::imageops::resize(
-        img,
-        target_width as u32,
-        MASK_HEIGHT as u32,
-        FilterType::Triangle,
-    );
-
-    let mut canvas = RgbImage::new(MASK_WIDTH as u32, MASK_HEIGHT as u32);
-    for y in 0..MASK_HEIGHT as u32 {
-        for x in 0..target_width as u32 {
-            canvas.put_pixel(x, y, *resized.get_pixel(x, y));
-        }
-    }
-
-    canvas
+fn normalize(value: u8) -> f32 {
+    f32::from(value) / 127.5 - 1.0
 }
 
 fn load_vocab(path: &Path) -> Result<Vec<String>> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read ONNX CAPTCHA vocab from {}", path.display()))?;
-    let mut vocab = vec![String::new(), String::new()];
+    // CTCLabelDecode prepends a single blank token at index 0; the character dict
+    // then occupies indices 1..=N.
+    let mut vocab = vec![String::new()];
     vocab.extend(content.lines().map(str::to_owned));
     Ok(vocab)
 }
