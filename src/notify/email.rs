@@ -70,9 +70,9 @@ impl EmailNotifier {
         let creds = Credentials::new(self.sender.clone(), self.password.clone());
 
         debug!("Connecting to SMTP server");
-        let mailer = match SmtpTransport::relay(&self.smtp_host) {
-            Ok(builder) => builder.credentials(creds).port(self.smtp_port).build(),
-            Err(e) => return Err(e.into()),
+        let mailer = {
+            let builder = SmtpTransport::relay(&self.smtp_host)?;
+            builder.credentials(creds).port(self.smtp_port).build()
         };
 
         match mailer.send(&email) {
