@@ -49,21 +49,21 @@ impl PushgoNotifier {
         let key_bytes = hex::decode(self.hex_key.trim())?;
 
         let nonce_bytes: [u8; 12] = rand::random();
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         let ciphertext_with_tag = match key_bytes.len() {
             16 => {
                 let cipher =
                     Aes128Gcm::new_from_slice(&key_bytes).map_err(|e| anyhow!("{:?}", e))?;
                 cipher
-                    .encrypt(nonce, plaintext)
+                    .encrypt(&nonce, plaintext)
                     .map_err(|e| anyhow!("{:?}", e))?
             }
             32 => {
                 let cipher =
                     Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| anyhow!("{:?}", e))?;
                 cipher
-                    .encrypt(nonce, plaintext)
+                    .encrypt(&nonce, plaintext)
                     .map_err(|e| anyhow!("{:?}", e))?
             }
             _ => {
