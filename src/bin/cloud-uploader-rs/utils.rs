@@ -1,15 +1,18 @@
 use anyhow::{Context, Result};
 use glob::glob;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
 /// Find files matching a glob pattern in a directory
 pub fn find_files_by_pattern(source_folder: &str, pattern: &str) -> Result<Vec<PathBuf>> {
     // Combine source folder and pattern
-    let full_pattern = if pattern.starts_with('/') || pattern.starts_with('\\') {
+    let full_pattern = if Path::new(pattern).is_absolute() {
         pattern.to_string()
     } else {
-        format!("{}/{}", source_folder.trim_end_matches('/'), pattern)
+        Path::new(source_folder)
+            .join(pattern)
+            .to_string_lossy()
+            .into_owned()
     };
 
     debug!("Searching for files with pattern: {}", full_pattern);

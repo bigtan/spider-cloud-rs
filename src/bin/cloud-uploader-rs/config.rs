@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{NaiveDate, Utc};
+use chrono::{Local, NaiveDate};
 use serde::Deserialize;
 use spider_cloud_rs::uploader::UploadContext;
 use std::fs;
@@ -101,18 +101,48 @@ impl Config {
     /// Resolve the date, fill date-dependent defaults and expand
     /// `{date}` / `{server_location}` placeholders.
     fn finalize(&mut self) -> Result<()> {
+        for opt in [
+            &mut self.custom_date,
+            &mut self.archive_password,
+            &mut self.file_pattern,
+            &mut self.archive_upload_path,
+            &mut self.files_upload_path,
+            &mut self.chanify_token,
+            &mut self.email_sender,
+            &mut self.email_password,
+            &mut self.email_recipient,
+            &mut self.pushgo_api_token,
+            &mut self.pushgo_hex_key,
+            &mut self.pushgo_channel_id,
+            &mut self.pushgo_password,
+            &mut self.pushgo_icon,
+            &mut self.pushgo_image,
+            &mut self.baidu_app_key,
+            &mut self.baidu_app_secret,
+            &mut self.baidu_config_path,
+            &mut self.baidu_archive_upload_path,
+            &mut self.baidu_files_upload_path,
+            &mut self.cloud189_config_path,
+            &mut self.cloud189_username,
+            &mut self.cloud189_password,
+            &mut self.cloud189_archive_upload_path,
+            &mut self.cloud189_files_upload_path,
+        ] {
+            if opt.as_ref().is_some_and(|s| s.trim().is_empty()) {
+                *opt = None;
+            }
+        }
+
         self.date = parse_date(self.custom_date.as_deref())?;
 
         if self.archive_source_folder.is_empty() {
-            self.archive_source_folder =
-                format!("/home/tanlei678/cfmdc/his_quota_dir/{}/", self.date);
+            self.archive_source_folder = format!("data/{}/", self.date);
         }
         if self.archive_output.is_empty() {
-            self.archive_output = format!("/home/tanlei678/archive/{}.7z", self.date);
+            self.archive_output = format!("archive/{}.7z", self.date);
         }
         if self.files_source_folder.is_empty() {
-            self.files_source_folder =
-                format!("/home/tanlei678/cfmdc/his_quota_dir/{}/", self.date);
+            self.files_source_folder = format!("data/{}/", self.date);
         }
 
         let mut ctx = UploadContext::with_date(self.date.as_str());
@@ -204,7 +234,7 @@ impl Config {
 }
 
 fn parse_date(custom_date: Option<&str>) -> Result<String> {
-    if let Some(custom_date) = custom_date {
+    if let Some(custom_date) = custom_date.map(str::trim).filter(|s| !s.is_empty()) {
         if custom_date.len() == 8
             && let Ok(date) = NaiveDate::parse_from_str(custom_date, "%Y%m%d")
         {
@@ -221,7 +251,7 @@ fn parse_date(custom_date: Option<&str>) -> Result<String> {
         );
     }
 
-    Ok(Utc::now().format("%Y%m%d").to_string())
+    Ok(Local::now().format("%Y%m%d").to_string())
 }
 
 fn default_server_location() -> String {
@@ -283,5 +313,28 @@ mod tests {
         assert_eq!(config.upload_mode, UploadMode::Archive);
         assert!(!config.debug);
         assert!(config.chanify_url.contains("chanify"));
+        assert_eq!(config.date, Local::now().format("%Y%m%d").to_string());
+    }
+
+    #[test]
+    fn finalize_normalizes_blank_optional_strings() {
+        let mut config: Config = toml::from_str(
+            r#"
+            archive_password = "   "
+            baidu_config_path = ""
+            baidu_archive_upload_path = ""
+            archive_upload_path = "/apps/archive/"
+            "#,
+        )
+        .unwrap();
+        config.finalize().unwrap();
+
+        assert!(config.archive_password.is_none());
+        assert!(config.baidu_config_path.is_none());
+        assert!(config.baidu_archive_upload_path.is_none());
+        assert_eq!(
+            config.archive_upload_path.as_deref(),
+            Some("/apps/archive/")
+        );
     }
 }
