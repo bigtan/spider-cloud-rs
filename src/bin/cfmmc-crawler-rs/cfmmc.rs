@@ -34,6 +34,8 @@ impl<'a> CFMMCCollector<'a> {
     ) -> Result<Self> {
         let client = Client::builder()
             .cookie_store(true)
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(60))
             .build()
             .context("Failed to build HTTP client")?;
         let request_delay_min_ms = env::var("CFMMC_REQUEST_DELAY_MIN_MS")

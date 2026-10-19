@@ -154,6 +154,8 @@ impl Cloud189Uploader {
         let jar = Arc::new(Jar::default());
         let client = Client::builder()
             .cookie_provider(jar.clone())
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(300))
             .build()
             .context("create http client")?;
 

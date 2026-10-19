@@ -97,6 +97,7 @@ impl BaiduOcrCaptchaRecognizer {
         }
 
         let client = Client::builder()
+            .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(20))
             .build()
             .context("Failed to build Baidu OCR HTTP client")?;

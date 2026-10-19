@@ -92,12 +92,18 @@ impl BaiduPanUploader {
                 .join("config.json"),
         };
 
+        let client = Client::builder()
+            .connect_timeout(StdDuration::from_secs(15))
+            .timeout(StdDuration::from_secs(300))
+            .build()
+            .context("Failed to create HTTP client")?;
+
         let mut uploader = Self {
             app_key,
             app_secret,
             config_file,
             token_data: None,
-            client: Client::new(),
+            client,
         };
 
         uploader.load_tokens()?;

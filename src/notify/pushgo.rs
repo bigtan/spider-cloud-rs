@@ -6,6 +6,7 @@ use base64::engine::general_purpose::STANDARD as Base64Standard;
 use reqwest::blocking::Client;
 use reqwest::header::CONTENT_TYPE;
 use serde_json::{Map, Value, json};
+use std::time::Duration;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
@@ -33,6 +34,11 @@ impl PushgoNotifier {
         icon: Option<String>,
         image: Option<String>,
     ) -> Self {
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
             url,
             api_token,
@@ -41,7 +47,7 @@ impl PushgoNotifier {
             password,
             icon,
             image,
-            client: Client::new(),
+            client,
         }
     }
 

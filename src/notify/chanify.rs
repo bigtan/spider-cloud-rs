@@ -1,6 +1,7 @@
 use reqwest::blocking::Client;
 use reqwest::header::CONTENT_TYPE;
 use serde_json::json;
+use std::time::Duration;
 use tracing::{debug, error, info};
 
 use crate::Result;
@@ -14,11 +15,12 @@ pub struct ChanifyNotifier {
 
 impl ChanifyNotifier {
     pub fn new(url: String, token: String) -> Self {
-        Self {
-            url,
-            token,
-            client: Client::new(),
-        }
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+        Self { url, token, client }
     }
 }
 
