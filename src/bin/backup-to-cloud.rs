@@ -65,8 +65,12 @@ fn main() -> Result<()> {
         cloud189_password,
         cloud189_use_qr,
     } = config.app;
-    let baidu_config_path = baidu_config_path.map(PathBuf::from);
-    let cloud189_config_path = cloud189_config_path.map(PathBuf::from);
+    let baidu_config_path = baidu_config_path
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from);
+    let cloud189_config_path = cloud189_config_path
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from);
 
     let has_baidu_key = baidu_app_key
         .as_deref()
@@ -96,26 +100,6 @@ fn main() -> Result<()> {
     let cloud189_uploader = if cloud189_enabled {
         let (username, password, use_qr) =
             resolve_cloud189_credentials(cloud189_username, cloud189_password, cloud189_use_qr);
-        let username_present = username
-            .as_deref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
-        let password_present = password
-            .as_deref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
-        if !use_qr {
-            if username_present ^ password_present {
-                anyhow::bail!(
-                    "Cloud189 uploader enabled with password login, but username/password are incomplete"
-                );
-            }
-            if !username_present && !password_present {
-                anyhow::bail!(
-                    "Cloud189 uploader enabled requires either cloud189_use_qr=true or both username/password"
-                );
-            }
-        }
         Some(Box::new(Cloud189Uploader::new(
             cloud189_config_path,
             username,

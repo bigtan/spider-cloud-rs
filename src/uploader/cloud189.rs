@@ -134,7 +134,17 @@ impl Cloud189Uploader {
         password: Option<String>,
         use_qr: bool,
     ) -> Result<Self> {
-        let config_path = match config_path {
+        let username = username
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let password = password.filter(|s| !s.trim().is_empty());
+        if !use_qr && (username.is_some() ^ password.is_some()) {
+            anyhow::bail!(
+                "Cloud189 uploader enabled with password login, but username/password are incomplete"
+            );
+        }
+
+        let config_path = match config_path.filter(|p| !p.as_os_str().is_empty()) {
             Some(path) => path,
             None => default_config_path()?,
         };
@@ -163,12 +173,15 @@ impl Cloud189Uploader {
                 }
             };
             if !refreshed {
-                if use_qr || username.is_none() || password.is_none() {
+                if use_qr {
                     api.login_qr()?;
+                } else if let (Some(user), Some(pass)) = (username.as_deref(), password.as_deref())
+                {
+                    api.login(user, pass)?;
                 } else {
-                    let user = username.ok_or_else(|| anyhow!("missing CLOUD189_USERNAME"))?;
-                    let pass = password.ok_or_else(|| anyhow!("missing CLOUD189_PASSWORD"))?;
-                    api.login(&user, &pass)?;
+                    anyhow::bail!(
+                        "Cloud189 has no valid session; configure both username/password or enable QR login"
+                    );
                 }
             }
         }
