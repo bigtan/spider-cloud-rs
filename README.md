@@ -95,6 +95,7 @@ The release workflow also packages:
 
 - all three binaries
 - example config files
+- local ONNX CAPTCHA model files (`models/`)
 
 Release notes are generated with `git-cliff` from `cliff.toml`.
 

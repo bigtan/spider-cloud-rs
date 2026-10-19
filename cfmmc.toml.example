@@ -41,6 +41,8 @@ enabled = false
 sender = ""
 password = ""
 recipient = ""
+# smtp_host = "smtp.qq.com"
+# smtp_port = 465
 
 [notifier.pushgo]
 enabled = false

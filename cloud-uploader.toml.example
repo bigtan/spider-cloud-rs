@@ -41,6 +41,8 @@ email_enabled = false
 email_sender = ""
 email_password = ""
 email_recipient = ""
+# email_smtp_host = "smtp.qq.com"
+# email_smtp_port = 465
 
 pushgo_enabled = false
 pushgo_url = "https://pushgo.estan.cn/message"
