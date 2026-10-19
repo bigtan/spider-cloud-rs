@@ -49,7 +49,7 @@ pub fn create_archive(
         .arg("-md=256m") // 256MB dictionary
         .arg("-ms=off"); // Disable solid compression
 
-    if let Some(pwd) = password.map(str::trim).filter(|p| !p.is_empty()) {
+    if let Some(pwd) = password.filter(|p| !p.trim().is_empty()) {
         command.arg(format!("-p{}", pwd));
     }
 
