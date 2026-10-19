@@ -3,7 +3,7 @@ use chrono::{DateTime, Duration, Utc};
 use reqwest::blocking::{Client, multipart};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{IsTerminal, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::Duration as StdDuration;
@@ -82,7 +82,7 @@ pub struct BaiduPanUploader {
 impl BaiduPanUploader {
     /// Create a new Baidu Pan uploader
     pub fn new(app_key: String, app_secret: String, config_file: Option<PathBuf>) -> Result<Self> {
-        let config_file = match config_file {
+        let config_file = match config_file.filter(|p| !p.as_os_str().is_empty()) {
             Some(path) => path,
             None => dirs::home_dir()
                 .context("cannot determine home directory")?
@@ -259,6 +259,13 @@ impl BaiduPanUploader {
     /// Perform authorization flow
     fn perform_authorization(&mut self) -> Result<()> {
         let auth_url = self.get_authorization_url();
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!(
+                "Baidu Pan manual authorization required, but standard input is not an interactive terminal. Open {} to authorize interactively.",
+                auth_url
+            );
+        }
+
         info!("Authorization required for first use or expired token");
         info!("1. Open the following link in your browser: {}", auth_url);
         info!("2. After login and authorization, you'll get an authorization code (code).");
@@ -267,7 +274,11 @@ impl BaiduPanUploader {
         let mut code = String::new();
         std::io::stdin().read_line(&mut code)?;
 
-        self.get_access_token(code.trim())?;
+        let code = code.trim();
+        if code.is_empty() {
+            anyhow::bail!("Authorization code cannot be empty");
+        }
+        self.get_access_token(code)?;
 
         // Verify authorization
         let user_info = self.get_user_info()?;
@@ -303,9 +314,10 @@ impl BaiduPanUploader {
     /// Get upload server for chunk upload
     fn get_upload_server(&self, access_token: &str, path: &str, upload_id: &str) -> Result<String> {
         let encoded_path = urlencoding::encode(path);
+        let encoded_upload_id = urlencoding::encode(upload_id);
         let url = format!(
             "{}file?method=locateupload&appid=250528&access_token={}&path={}&uploadid={}&upload_version=2.0",
-            PCS_BASE_URL, access_token, encoded_path, upload_id
+            PCS_BASE_URL, access_token, encoded_path, encoded_upload_id
         );
 
         let response = self.client.get(&url).send()?;
@@ -408,6 +420,9 @@ impl BaiduPanUploader {
         let upload_server = self.get_upload_server(&access_token, &remote_full_path, &upload_id)?;
         info!("Upload server: {}", upload_server);
 
+        let encoded_path = urlencoding::encode(&remote_full_path);
+        let encoded_upload_id = urlencoding::encode(&upload_id);
+
         // 3. Upload chunks (streamed from disk to avoid buffering 4MB copies)
         for i in 0..block_list.len() {
             info!("Uploading chunk {}/{}", i + 1, block_list.len());
@@ -417,7 +432,7 @@ impl BaiduPanUploader {
 
             let upload_url = format!(
                 "{}/rest/2.0/pcs/superfile2?method=upload&access_token={}&type=tmpfile&path={}&uploadid={}&partseq={}",
-                upload_server, access_token, remote_full_path, upload_id, i
+                upload_server, access_token, encoded_path, encoded_upload_id, i
             );
 
             let mut attempt = 0;
@@ -431,22 +446,40 @@ impl BaiduPanUploader {
                 let response = self.client.post(&upload_url).multipart(form).send();
                 match response {
                     Ok(resp) => {
-                        if !resp.status().is_success() {
-                            anyhow::bail!("Chunk {} upload failed: {}", i, resp.status());
+                        let status = resp.status();
+                        if status.is_success() {
+                            break;
                         }
-                        break;
+                        let retryable_status = status.is_server_error() || status.as_u16() == 429;
+                        if retryable_status && attempt <= CHUNK_UPLOAD_MAX_RETRIES {
+                            let backoff_ms =
+                                CHUNK_UPLOAD_BACKOFF_BASE_MS * (1_u64 << (attempt - 1));
+                            warn!(
+                                "Chunk {} upload returned HTTP {} (attempt {}/{}), retrying after {}ms",
+                                i + 1,
+                                status,
+                                attempt,
+                                CHUNK_UPLOAD_MAX_RETRIES,
+                                backoff_ms
+                            );
+                            sleep(StdDuration::from_millis(backoff_ms));
+                            continue;
+                        }
+                        anyhow::bail!("Chunk {} upload failed: {}", i, status);
                     }
                     Err(e) => {
-                        let should_retry = e.is_timeout();
+                        let should_retry =
+                            e.is_timeout() || e.is_connect() || e.is_request() || e.is_body();
                         if should_retry && attempt <= CHUNK_UPLOAD_MAX_RETRIES {
                             let backoff_ms =
                                 CHUNK_UPLOAD_BACKOFF_BASE_MS * (1_u64 << (attempt - 1));
                             warn!(
-                                "Chunk {} upload timed out (attempt {}/{}), retrying after {}ms",
+                                "Chunk {} upload failed with transient error (attempt {}/{}), retrying after {}ms: {}",
                                 i + 1,
                                 attempt,
                                 CHUNK_UPLOAD_MAX_RETRIES,
-                                backoff_ms
+                                backoff_ms,
+                                e
                             );
                             sleep(StdDuration::from_millis(backoff_ms));
                             continue;
