@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 use tracing::info;
@@ -9,10 +10,29 @@ pub fn create_archive(
     output_archive: &str,
     password: Option<&str>,
 ) -> Result<bool> {
-    // If archive already exists, skip creation
-    if Path::new(output_archive).exists() {
-        info!("Archive already exists: {}", output_archive);
-        return Ok(true);
+    let output_path = Path::new(output_archive);
+
+    // If a non-empty archive already exists, skip creation
+    if let Ok(meta) = fs::metadata(output_path) {
+        if meta.len() > 0 {
+            info!("Archive already exists: {}", output_archive);
+            return Ok(true);
+        }
+        let _ = fs::remove_file(output_path);
+    }
+
+    let source_path = Path::new(source_folder);
+    if !source_path.exists() {
+        anyhow::bail!("Archive source folder not found: {}", source_folder);
+    }
+
+    if let Some(parent) = output_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "Failed to create archive output directory: {}",
+                parent.display()
+            )
+        })?;
     }
 
     info!(
@@ -29,7 +49,7 @@ pub fn create_archive(
         .arg("-md=256m") // 256MB dictionary
         .arg("-ms=off"); // Disable solid compression
 
-    if let Some(pwd) = password {
+    if let Some(pwd) = password.map(str::trim).filter(|p| !p.is_empty()) {
         command.arg(format!("-p{}", pwd));
     }
 
@@ -44,6 +64,7 @@ pub fn create_archive(
         info!("Archive created successfully");
         Ok(true)
     } else {
+        let _ = fs::remove_file(output_path);
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("Failed to create archive: {}", stderr);
     }

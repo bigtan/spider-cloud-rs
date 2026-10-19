@@ -332,37 +332,46 @@ fn run_command(command: &str, workdir: Option<&str>) -> Result<()> {
 }
 
 fn create_archive(source_path: &Path, output_path: &Path) -> Result<()> {
-    let file = File::create(output_path)
-        .with_context(|| format!("Failed to create archive file: {}", output_path.display()))?;
-    let encoder = zstd::Encoder::new(file, 10).context("Failed to initialize zstd encoder")?;
-    let mut builder = tar::Builder::new(encoder);
+    let result = (|| -> Result<()> {
+        let file = File::create(output_path)
+            .with_context(|| format!("Failed to create archive file: {}", output_path.display()))?;
+        let encoder = zstd::Encoder::new(file, 10).context("Failed to initialize zstd encoder")?;
+        let mut builder = tar::Builder::new(encoder);
 
-    let base_name = source_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("backup");
+        let base_name = source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("backup");
 
-    if source_path.is_dir() {
-        builder
-            .append_dir_all(base_name, source_path)
-            .with_context(|| format!("Failed to append directory: {}", source_path.display()))?;
-    } else if source_path.is_file() {
-        builder
-            .append_path_with_name(source_path, base_name)
-            .with_context(|| format!("Failed to append file: {}", source_path.display()))?;
-    } else {
-        anyhow::bail!(
-            "Source path is not a file or directory: {}",
-            source_path.display()
-        );
+        if source_path.is_dir() {
+            builder
+                .append_dir_all(base_name, source_path)
+                .with_context(|| {
+                    format!("Failed to append directory: {}", source_path.display())
+                })?;
+        } else if source_path.is_file() {
+            builder
+                .append_path_with_name(source_path, base_name)
+                .with_context(|| format!("Failed to append file: {}", source_path.display()))?;
+        } else {
+            anyhow::bail!(
+                "Source path is not a file or directory: {}",
+                source_path.display()
+            );
+        }
+        builder.finish().context("Failed to finish tar archive")?;
+        let encoder = builder
+            .into_inner()
+            .context("Failed to finalize tar builder")?;
+        encoder.finish().context("Failed to finish zstd encoding")?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(output_path);
     }
-    builder.finish().context("Failed to finish tar archive")?;
-    let encoder = builder
-        .into_inner()
-        .context("Failed to finalize tar builder")?;
-    encoder.finish().context("Failed to finish zstd encoding")?;
-    Ok(())
+    result
 }
 
 #[cfg(test)]
