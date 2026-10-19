@@ -1,6 +1,7 @@
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::fs;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AccountConfig {
@@ -154,41 +155,47 @@ impl Default for OnnxCaptchaConfig {
     }
 }
 
-pub fn load_config(path: &str) -> Option<Config> {
+pub fn load_config(path: &str) -> Result<Config> {
     debug!("Reading CFMMC configuration from TOML: {}", path);
 
-    let contents = match fs::read_to_string(path) {
-        Ok(contents) => contents,
-        Err(err) => {
-            error!("Failed to read config file {}: {}", path, err);
-            return None;
-        }
-    };
+    let contents =
+        fs::read_to_string(path).with_context(|| format!("Failed to read config file: {path}"))?;
 
-    let config: Config = match toml::from_str(&contents) {
-        Ok(config) => config,
-        Err(err) => {
-            error!("Failed to parse config file {}: {}", path, err);
-            return None;
-        }
-    };
+    let mut config: Config = toml::from_str(&contents)
+        .with_context(|| format!("Failed to parse config file: {path}"))?;
 
-    if config.account.accounts.len() != config.account.passwords.len()
-        || config.account.accounts.is_empty()
+    for opt in [
+        &mut config.notifier.chanify.token,
+        &mut config.notifier.email.sender,
+        &mut config.notifier.email.password,
+        &mut config.notifier.email.recipient,
+        &mut config.notifier.pushgo.api_token,
+        &mut config.notifier.pushgo.channel_id,
+        &mut config.notifier.pushgo.password,
+        &mut config.notifier.pushgo.hex_key,
+        &mut config.notifier.pushgo.icon,
+        &mut config.notifier.pushgo.image,
+    ] {
+        if opt.as_ref().is_some_and(|s| s.trim().is_empty()) {
+            *opt = None;
+        }
+    }
+
+    if config.account.accounts.is_empty()
+        || config.account.accounts.len() != config.account.passwords.len()
     {
-        warn!(
+        bail!(
             "Account and password counts don't match or are empty: accounts={}, passwords={}",
             config.account.accounts.len(),
             config.account.passwords.len()
         );
-        return None;
     }
 
-    info!(
-        "Account configuration loaded successfully for {} accounts",
-        config.account.accounts.len()
-    );
-    Some(config)
+    if config.onnx_captcha.captcha_length == 0 {
+        bail!("onnx_captcha.captcha_length must be greater than zero");
+    }
+
+    Ok(config)
 }
 
 fn default_chanify_url() -> String {
@@ -213,4 +220,20 @@ fn default_onnx_captcha_vocab_path() -> String {
 
 fn default_onnx_captcha_length() -> usize {
     6
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_config_rejects_mismatched_accounts_and_passwords() {
+        let toml_str = r#"
+            [account]
+            accounts = ["u1", "u2"]
+            passwords = ["p1"]
+        "#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_ne!(cfg.account.accounts.len(), cfg.account.passwords.len());
+    }
 }

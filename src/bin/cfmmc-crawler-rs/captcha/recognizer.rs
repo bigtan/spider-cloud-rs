@@ -28,6 +28,7 @@ pub struct BaiduOcrOptions {
     pub api_key: String,
     pub secret_key: String,
     pub ocr_url: String,
+    pub captcha_length: usize,
     pub debug: bool,
 }
 
@@ -314,6 +315,7 @@ impl Default for BaiduOcrOptions {
             api_key: String::new(),
             secret_key: String::new(),
             ocr_url: DEFAULT_OCR_URL.to_string(),
+            captcha_length: 6,
             debug: false,
         }
     }
@@ -361,12 +363,13 @@ impl CaptchaRecognizer for BaiduOcrCaptchaRecognizer {
             .filter(|ch| !ch.is_whitespace())
             .collect::<String>();
 
-        if result.len() == 6 {
+        if result.len() == self.options.captcha_length {
             info!("CAPTCHA recognition successful: {}", result);
         } else {
             warn!(
-                "CAPTCHA recognition returned unexpected length: {} (expected 6): {}",
+                "CAPTCHA recognition returned unexpected length: {} (expected {}): {}",
                 result.len(),
+                self.options.captcha_length,
                 result
             );
         }

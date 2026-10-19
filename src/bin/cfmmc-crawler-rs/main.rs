@@ -50,11 +50,16 @@ fn run() -> Result<()> {
         info!("Debug logging enabled");
     }
     info!("CFMMC Crawler started");
+    info!(
+        "Account configuration loaded successfully for {} accounts",
+        config.account.accounts.len()
+    );
 
     let account_config = config.account;
     let captcha_config = config.captcha;
     let baidu_ocr_config = config.baidu_ocr;
     let onnx_captcha_config = config.onnx_captcha;
+    let captcha_length = onnx_captcha_config.captcha_length;
     let notifier_config = config.notifier;
     info!(
         "Notifier config loaded: Chanify={}, Email={}, Pushgo={}",
@@ -170,6 +175,7 @@ fn run() -> Result<()> {
                 account.clone(),
                 password.clone(),
                 recognizer.as_mut(),
+                captcha_length,
                 debug,
             ) {
                 Ok(collector) => collector,
@@ -267,10 +273,15 @@ fn build_captcha_recognizer(
     onnx_config: OnnxCaptchaConfig,
     debug: bool,
 ) -> Result<Box<dyn CaptchaRecognizer>> {
+    let expected_len = onnx_config.captcha_length;
     match provider {
         CaptchaProvider::Baidu => {
             info!("Using Baidu OCR CAPTCHA recognizer");
-            Ok(Box::new(build_baidu_recognizer(baidu_config, debug)?))
+            Ok(Box::new(build_baidu_recognizer(
+                baidu_config,
+                expected_len,
+                debug,
+            )?))
         }
         CaptchaProvider::Onnx => {
             info!("Using local ONNX CAPTCHA recognizer");
@@ -278,18 +289,16 @@ fn build_captcha_recognizer(
         }
         CaptchaProvider::OnnxThenBaidu => {
             info!("Using local ONNX CAPTCHA recognizer with Baidu OCR fallback");
-            let expected_len = onnx_config.captcha_length;
             Ok(Box::new(FallbackCaptchaRecognizer::new(
                 Box::new(build_onnx_recognizer(onnx_config, debug)?),
-                Box::new(build_baidu_recognizer(baidu_config, debug)?),
+                Box::new(build_baidu_recognizer(baidu_config, expected_len, debug)?),
                 expected_len,
             )))
         }
         CaptchaProvider::BaiduThenOnnx => {
             info!("Using Baidu OCR CAPTCHA recognizer with local ONNX fallback");
-            let expected_len = onnx_config.captcha_length;
             Ok(Box::new(FallbackCaptchaRecognizer::new(
-                Box::new(build_baidu_recognizer(baidu_config, debug)?),
+                Box::new(build_baidu_recognizer(baidu_config, expected_len, debug)?),
                 Box::new(build_onnx_recognizer(onnx_config, debug)?),
                 expected_len,
             )))
@@ -299,12 +308,14 @@ fn build_captcha_recognizer(
 
 fn build_baidu_recognizer(
     config: BaiduOcrConfig,
+    captcha_length: usize,
     debug: bool,
 ) -> Result<BaiduOcrCaptchaRecognizer> {
     BaiduOcrCaptchaRecognizer::new(BaiduOcrOptions {
         api_key: config.api_key,
         secret_key: config.secret_key,
         ocr_url: config.url,
+        captcha_length,
         debug,
     })
 }

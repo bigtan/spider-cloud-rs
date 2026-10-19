@@ -17,6 +17,7 @@ pub struct CFMMCCollector<'a> {
     pub password: String,
     pub client: Client,
     pub captcha_recognizer: &'a mut dyn CaptchaRecognizer,
+    pub captcha_length: usize,
     pub base_url: String,
     pub debug: bool,
     pub request_delay_min_ms: u64,
@@ -28,6 +29,7 @@ impl<'a> CFMMCCollector<'a> {
         user_id: String,
         password: String,
         captcha_recognizer: &'a mut dyn CaptchaRecognizer,
+        captcha_length: usize,
         debug: bool,
     ) -> Result<Self> {
         let client = Client::builder()
@@ -68,6 +70,7 @@ impl<'a> CFMMCCollector<'a> {
             password,
             client,
             captcha_recognizer,
+            captcha_length,
             base_url: "https://investorservice.cfmmc.com".to_string(),
             debug,
             request_delay_min_ms,
@@ -126,8 +129,12 @@ impl<'a> CFMMCCollector<'a> {
 
             debug!("Recognized CAPTCHA: {}", captcha_code);
 
-            if captcha_code.len() != 6 {
-                warn!("Invalid CAPTCHA length: {}, expected 6", captcha_code.len());
+            if captcha_code.len() != self.captcha_length {
+                warn!(
+                    "Invalid CAPTCHA length: {}, expected {}",
+                    captcha_code.len(),
+                    self.captcha_length
+                );
                 continue;
             }
 
