@@ -41,10 +41,17 @@ impl NotificationManager {
                 &config.email_recipient,
             ) {
                 info!("Creating Email notifier");
-                email = Some(notify::email::EmailNotifier::new(
+                let smtp_host = config
+                    .email_smtp_host
+                    .clone()
+                    .unwrap_or_else(|| "smtp.qq.com".to_string());
+                let smtp_port = config.email_smtp_port.unwrap_or(465);
+                email = Some(notify::email::EmailNotifier::with_smtp(
                     sender.clone(),
                     password.clone(),
                     recipient.clone(),
+                    smtp_host,
+                    smtp_port,
                 ));
             } else {
                 warn!("Email notifications enabled but missing required configuration");
@@ -145,9 +152,12 @@ impl NotificationManager {
             "#FF5252",
             "❌",
             &format!(
-                "<p><strong>{headline}</strong></p>\
-                 <p>🖥️ <strong>服务器:</strong> {server_location}</p>\
-                 <p><strong>错误:</strong> {error}</p>"
+                "<p><strong>{}</strong></p>\
+                 <p>🖥️ <strong>服务器:</strong> {}</p>\
+                 <p><strong>错误:</strong> {}</p>",
+                notify::escape_html(&headline),
+                notify::escape_html(server_location),
+                notify::escape_html(error)
             ),
         );
         let pushgo_md = format!(
@@ -239,8 +249,8 @@ fn email_upload_html(subject: &str, report: &UploadReport) -> String {
         "<p><strong>{}</strong></p>\
          <p>🖥️ <strong>服务器:</strong> {}</p>\
          <h3>上传结果</h3><table><tr><th>服务</th><th>状态</th></tr>",
-        report.headline(),
-        report.server_location
+        notify::escape_html(&report.headline()),
+        notify::escape_html(report.server_location)
     );
     for attempt in report.attempts {
         let (class, icon) = if attempt.success {
@@ -250,10 +260,10 @@ fn email_upload_html(subject: &str, report: &UploadReport) -> String {
         };
         content.push_str(&format!(
             "<tr><td>{}</td><td class=\"{}\">{} {}</td></tr>",
-            attempt.name,
+            notify::escape_html(&attempt.name),
             class,
             icon,
-            attempt_status(attempt)
+            notify::escape_html(&attempt_status(attempt))
         ));
     }
     content.push_str("</table>");
@@ -262,6 +272,7 @@ fn email_upload_html(subject: &str, report: &UploadReport) -> String {
 }
 
 fn email_shell(subject: &str, theme_color: &str, status_icon: &str, body_html: &str) -> String {
+    let escaped_subject = notify::escape_html(subject);
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -300,7 +311,7 @@ fn email_shell(subject: &str, theme_color: &str, status_icon: &str, body_html: &
 <body>
     <div class="container">
         <div class="header">
-            <h1>{status_icon} {subject}</h1>
+            <h1>{status_icon} {escaped_subject}</h1>
         </div>
         <div class="content">{body_html}
         </div>
@@ -349,14 +360,15 @@ mod tests {
     }
 
     #[test]
-    fn email_html_renders_status_classes() {
+    fn email_html_renders_status_classes_and_escapes_html() {
         let attempts = vec![
             UploadAttempt::success("BaiduPan"),
-            UploadAttempt::failure("Cloud189", "timeout"),
+            UploadAttempt::failure("Cloud189", "<html>502</html>"),
         ];
-        let html = email_upload_html("subject", &sample_report(&attempts));
+        let html = email_upload_html("subject <test>", &sample_report(&attempts));
         assert!(html.contains("status-success"));
         assert!(html.contains("status-fail"));
-        assert!(html.contains("失败 (timeout)"));
+        assert!(html.contains("失败 (&lt;html&gt;502&lt;/html&gt;)"));
+        assert!(html.contains("subject &lt;test&gt;"));
     }
 }

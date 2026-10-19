@@ -25,6 +25,8 @@ pub struct EmailConfig {
     pub sender: Option<String>,
     pub password: Option<String>,
     pub recipient: Option<String>,
+    pub smtp_host: Option<String>,
+    pub smtp_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -169,6 +171,7 @@ pub fn load_config(path: &str) -> Result<Config> {
         &mut config.notifier.email.sender,
         &mut config.notifier.email.password,
         &mut config.notifier.email.recipient,
+        &mut config.notifier.email.smtp_host,
         &mut config.notifier.pushgo.api_token,
         &mut config.notifier.pushgo.channel_id,
         &mut config.notifier.pushgo.password,

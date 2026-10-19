@@ -86,20 +86,29 @@ fn run() -> Result<()> {
 
     if notifier_config.email.enabled {
         info!("Initializing Email notifier");
-        notifiers.push(AccountNotifier::Email(notify::email::EmailNotifier::new(
-            notifier_config
-                .email
-                .sender
-                .context("Email enabled but sender not configured")?,
-            notifier_config
-                .email
-                .password
-                .context("Email enabled but password not configured")?,
-            notifier_config
-                .email
-                .recipient
-                .context("Email enabled but recipient not configured")?,
-        )));
+        let smtp_host = notifier_config
+            .email
+            .smtp_host
+            .unwrap_or_else(|| "smtp.qq.com".to_string());
+        let smtp_port = notifier_config.email.smtp_port.unwrap_or(465);
+        notifiers.push(AccountNotifier::Email(
+            notify::email::EmailNotifier::with_smtp(
+                notifier_config
+                    .email
+                    .sender
+                    .context("Email enabled but sender not configured")?,
+                notifier_config
+                    .email
+                    .password
+                    .context("Email enabled but password not configured")?,
+                notifier_config
+                    .email
+                    .recipient
+                    .context("Email enabled but recipient not configured")?,
+                smtp_host,
+                smtp_port,
+            ),
+        ));
     }
 
     if notifier_config.pushgo.enabled {

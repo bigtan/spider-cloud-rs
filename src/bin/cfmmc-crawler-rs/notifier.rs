@@ -162,11 +162,13 @@ fn build_email_html(date_str: &str, accounts_data: &AccountsData) -> String {
     </style>
     "#;
 
-    let mut content = format!("{css_styles}<h2>CFMMC 账户数据汇总 - {date_str}</h2>");
+    let escaped_date = notify::escape_html(date_str);
+    let mut content = format!("{css_styles}<h2>CFMMC 账户数据汇总 - {escaped_date}</h2>");
     for (account, data) in accounts_data {
+        let escaped_account = notify::escape_html(account);
         let Some(data) = data else {
             content.push_str(&format!(
-                "<div class=\"summary-card\"><h3>账户: {account}</h3><p class=\"negative\">⚠️ 未获取到结算数据</p></div>"
+                "<div class=\"summary-card\"><h3>账户: {escaped_account}</h3><p class=\"negative\">⚠️ 未获取到结算数据</p></div>"
             ));
             continue;
         };
@@ -200,7 +202,7 @@ fn build_email_html(date_str: &str, accounts_data: &AccountsData) -> String {
         };
 
         content.push_str(&format!(
-            "<div class=\"summary-card\"><h3>账户: {account}</h3><table class=\"data-table\"><tr><th>项目</th><th>数值</th></tr><tr><td>客户权益</td><td>￥{equity:.2}</td></tr><tr><td>平仓盈亏</td><td class=\"{closed_pnl_class}\">￥{closed_pnl:.2}</td></tr><tr><td>浮动盈亏</td><td class=\"{float_pnl_class}\">￥{float_pnl:.2}</td></tr><tr><td>风险度</td><td class=\"{risk_class}\">{risk:.2}%</td></tr><tr><td>交易手续费</td><td>￥{fee:.2}</td></tr></table></div>"
+            "<div class=\"summary-card\"><h3>账户: {escaped_account}</h3><table class=\"data-table\"><tr><th>项目</th><th>数值</th></tr><tr><td>客户权益</td><td>￥{equity:.2}</td></tr><tr><td>平仓盈亏</td><td class=\"{closed_pnl_class}\">￥{closed_pnl:.2}</td></tr><tr><td>浮动盈亏</td><td class=\"{float_pnl_class}\">￥{float_pnl:.2}</td></tr><tr><td>风险度</td><td class=\"{risk_class}\">{risk:.2}%</td></tr><tr><td>交易手续费</td><td>￥{fee:.2}</td></tr></table></div>"
         ));
     }
 

@@ -42,6 +42,8 @@ pub struct Config {
     pub email_sender: Option<String>,
     pub email_password: Option<String>,
     pub email_recipient: Option<String>,
+    pub email_smtp_host: Option<String>,
+    pub email_smtp_port: Option<u16>,
     #[serde(default)]
     pub pushgo_enabled: bool,
     pub pushgo_api_token: Option<String>,
@@ -111,6 +113,7 @@ impl Config {
             &mut self.email_sender,
             &mut self.email_password,
             &mut self.email_recipient,
+            &mut self.email_smtp_host,
             &mut self.pushgo_api_token,
             &mut self.pushgo_hex_key,
             &mut self.pushgo_channel_id,
