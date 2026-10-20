@@ -16,24 +16,66 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          lfs: true
       - name: Set up Rust
+        if: matrix.os == 'windows-latest'
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           components: clippy
       - name: Rust Cache
+        if: matrix.os == 'windows-latest'
         uses: Swatinem/rust-cache@v2
       - name: Check formatting
+        if: matrix.os == 'windows-latest'
         run: cargo fmt --all -- --check
       - name: Clippy
+        if: matrix.os == 'windows-latest'
         run: cargo clippy --all-targets -- -D warnings
-      - name: Build Linux binaries
+      - name: Check, build, and test Linux binaries on Debian 13
         if: matrix.os == 'ubuntu-latest'
-        run: cargo build --release --bins
+        shell: bash
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            -e CARGO_TARGET_DIR=/workspace/target/debian13 \
+            rust:1-trixie sh -ec '
+              rustup component add rustfmt clippy
+              cargo fmt --all -- --check
+              cargo clippy --all-targets --locked -- -D warnings
+              cargo build --release --bins --locked
+              cargo test --release --all-targets --locked
+            '
+      - name: Verify Linux binaries on Debian 13
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -v "$GITHUB_WORKSPACE/target/debian13/release:/app:ro" \
+            debian:13-slim sh -ec '
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates libgcc-s1 libstdc++6
+              cd /tmp
+              for binary in backup-to-cloud cfmmc-crawler-rs cloud-uploader-rs; do
+                ldd "/app/$binary" > /tmp/ldd.txt
+                cat /tmp/ldd.txt
+                if grep -q "not found" /tmp/ldd.txt; then
+                  exit 1
+                fi
+                # Exercise startup without credentials or network operations.
+                status=0
+                "/app/$binary" unused.toml extra > /tmp/startup.txt 2>&1 || status=$?
+                cat /tmp/startup.txt
+                test "$status" -eq 1
+                grep -q "Too many arguments" /tmp/startup.txt
+              done
+            '
       - name: Build Windows binaries
         if: matrix.os == 'windows-latest'
         run: cargo build --release --bins
       - name: Run tests
+        if: matrix.os == 'windows-latest'
         run: cargo test --release --all-targets
       - name: Upload Linux build artifacts
         if: matrix.os == 'ubuntu-latest'
@@ -41,9 +83,9 @@ jobs:
         with:
           name: spider-cloud-rs-x86_64-unknown-linux-gnu
           path: |
-            target/release/backup-to-cloud
-            target/release/cfmmc-crawler-rs
-            target/release/cloud-uploader-rs
+            target/debian13/release/backup-to-cloud
+            target/debian13/release/cfmmc-crawler-rs
+            target/debian13/release/cloud-uploader-rs
           retention-days: 7
       - name: Upload Windows build artifacts
         if: matrix.os == 'windows-latest'

@@ -88,7 +88,7 @@ cargo run --release --bin backup-to-cloud -- backup.toml
 
 The repository includes GitHub Actions workflows under `.github/workflows`:
 
-- `build.yml`: builds and tests on Linux and Windows
+- `build.yml`: checks formatting, runs Clippy, builds and tests in Debian 13 containers and on Windows; verifies Linux binary startup in a clean Debian 13 container
 - `release.yml`: builds release artifacts for tags and publishes archives
 
 Linux release binaries target Debian 13 (trixie), x86_64. They are compiled in
