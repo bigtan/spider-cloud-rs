@@ -22,14 +22,46 @@ jobs:
         with:
           lfs: true
       - name: Set up Rust
+        if: matrix.os == 'windows-latest'
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
       - name: Rust Cache
+        if: matrix.os == 'windows-latest'
         uses: Swatinem/rust-cache@v2
-      - name: Build Linux binaries
+      - name: Build Linux binaries on Debian 13
         if: matrix.os == 'ubuntu-latest'
-        run: cargo build --release --bins
+        shell: bash
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            -e CARGO_TARGET_DIR=/workspace/target/debian13 \
+            rust:1-trixie \
+            cargo build --release --bins --locked
+      - name: Verify Linux binaries on Debian 13
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -v "$GITHUB_WORKSPACE/target/debian13/release:/app:ro" \
+            debian:13-slim sh -ec '
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates libgcc-s1 libstdc++6
+              cd /tmp
+              for binary in backup-to-cloud cfmmc-crawler-rs cloud-uploader-rs; do
+                ldd "/app/$binary" > /tmp/ldd.txt
+                cat /tmp/ldd.txt
+                if grep -q "not found" /tmp/ldd.txt; then
+                  exit 1
+                fi
+                # Exercise startup without credentials or network operations.
+                status=0
+                "/app/$binary" unused.toml extra > /tmp/startup.txt 2>&1 || status=$?
+                cat /tmp/startup.txt
+                test "$status" -eq 1
+                grep -q "Too many arguments" /tmp/startup.txt
+              done
+            '
       - name: Build Windows binaries
         if: matrix.os == 'windows-latest'
         run: cargo build --release --bins
@@ -50,9 +82,9 @@ jobs:
             cp target/release/cloud-uploader-rs.exe "$APP_DIR/"
             ARCHIVE_NAME="$APP_DIR.zip"
           else
-            cp target/release/backup-to-cloud "$APP_DIR/"
-            cp target/release/cfmmc-crawler-rs "$APP_DIR/"
-            cp target/release/cloud-uploader-rs "$APP_DIR/"
+            cp target/debian13/release/backup-to-cloud "$APP_DIR/"
+            cp target/debian13/release/cfmmc-crawler-rs "$APP_DIR/"
+            cp target/debian13/release/cloud-uploader-rs "$APP_DIR/"
             ARCHIVE_NAME="$APP_DIR.tar.gz"
           fi
 

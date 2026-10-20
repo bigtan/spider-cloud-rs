@@ -91,6 +91,14 @@ The repository includes GitHub Actions workflows under `.github/workflows`:
 - `build.yml`: builds and tests on Linux and Windows
 - `release.yml`: builds release artifacts for tags and publishes archives
 
+Linux release binaries target Debian 13 (trixie), x86_64. They are compiled in
+the official `rust:1-trixie` container and checked for shared-library resolution
+and startup in a clean `debian:13-slim` container before packaging. The Ubuntu
+Actions runner only hosts Docker; it does not compile the Linux release binaries.
+On Debian 13, install `ca-certificates`, `libgcc-s1`, and `libstdc++6`.
+Archive mode in `cloud-uploader-rs` also requires `7z` in `PATH`.
+Windows release binaries continue to be built on Windows.
+
 The release workflow also packages:
 
 - all three binaries
