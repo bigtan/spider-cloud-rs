@@ -6,9 +6,8 @@ use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use httpdate::fmt_http_date;
 use reqwest::blocking::RequestBuilder;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use rsa::PublicKey;
 use rsa::pkcs8::DecodePublicKey;
-use rsa::rand_core::OsRng;
-use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
 use sha1::Sha1;
 use url::Url;
 use uuid::Uuid;
@@ -23,13 +22,13 @@ pub(super) fn encrypt_credentials(
     pass: &str,
 ) -> Result<(String, String)> {
     let pem = normalize_public_key(pub_key);
-    let key = RsaPublicKey::from_public_key_pem(&pem)
+    let key = PublicKey::from_public_key_pem(&pem)
         .map_err(|e| UploadError::Protocol(format!("parse Cloud189 RSA public key: {e}")))?;
     let enc_user = key
-        .encrypt(&mut OsRng, Pkcs1v15Encrypt, user.as_bytes())
+        .pkcs1v15_encrypt(user.as_bytes())
         .map_err(|e| UploadError::Protocol(format!("encrypt username: {e}")))?;
     let enc_pass = key
-        .encrypt(&mut OsRng, Pkcs1v15Encrypt, pass.as_bytes())
+        .pkcs1v15_encrypt(pass.as_bytes())
         .map_err(|e| UploadError::Protocol(format!("encrypt password: {e}")))?;
     Ok((
         format!("{}{}", prefix, hex::encode(enc_user)),

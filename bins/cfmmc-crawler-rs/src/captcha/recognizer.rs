@@ -292,7 +292,10 @@ impl OnnxCaptchaRecognizer {
             bail!("ONNX CAPTCHA length must be greater than zero");
         }
 
-        let session = Session::builder()
+        let env = ort::init()
+            .build()
+            .context("Failed to initialize ONNX Runtime environment")?;
+        let session = Session::builder(&env)
             .context("Failed to create ONNX Runtime session builder")?
             .commit_from_file(&options.model_path)
             .with_context(|| {
