@@ -1,0 +1,27 @@
+[package]
+name = "cfmmc-crawler-rs"
+version = "0.2.0"
+edition = "2024"
+
+[[bin]]
+name = "cfmmc-crawler-rs"
+path = "src/main.rs"
+
+[dependencies]
+spider-common = { path = "../../crates/spider-common", default-features = false }
+spider-notify = { path = "../../crates/spider-notify" }
+anyhow = "1.0"
+base64 = "0.23"
+calamine = "0.36"
+chrono = { version = "0.4", features = ["serde"] }
+image = "0.25"
+indexmap = "2.14"
+ndarray = "0.17"
+ort = "2.0.0-rc.13"
+rand = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "multipart", "form", "cookies", "rustls"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "1.1"
+tracing = "0.1"
+url = "2"
+zeroize = { version = "1.9", default-features = false, features = ["alloc"] }
