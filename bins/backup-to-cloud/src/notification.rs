@@ -196,13 +196,7 @@ fn email_backup_html(subject: &str, report: &BackupReport<'_>) -> String {
     }
     content.push_str("</table>");
 
-    render_email_shell(
-        subject,
-        theme_color,
-        status_icon,
-        &content,
-        "© 2025 云备份系统",
-    )
+    render_email_shell(subject, theme_color, status_icon, &content)
 }
 
 #[cfg(test)]

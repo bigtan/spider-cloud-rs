@@ -67,7 +67,6 @@ impl NotificationManager {
                 escape_html(server_location),
                 escape_html(error)
             ),
-            "© 2025 云存储上传系统",
         );
         let markdown_body = format!(
             "> {headline}\n\n- **服务器**: {server_location}\n- **状态**: 失败\n\n**错误**\n\n{error}\n"
@@ -194,13 +193,7 @@ fn email_upload_html(subject: &str, report: &UploadReport<'_>) -> String {
     }
     content.push_str("</table>");
 
-    render_email_shell(
-        subject,
-        theme_color,
-        status_icon,
-        &content,
-        "© 2025 云存储上传系统",
-    )
+    render_email_shell(subject, theme_color, status_icon, &content)
 }
 
 #[cfg(test)]
