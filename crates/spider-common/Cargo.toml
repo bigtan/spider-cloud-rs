@@ -1,0 +1,19 @@
+[package]
+name = "spider-common"
+version = "0.2.0"
+edition = "2024"
+
+[features]
+default = ["archive"]
+archive = ["dep:tar", "dep:zstd"]
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.10"
+tar = { version = "0.4", optional = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4"] }
+zeroize = { version = "1.9", default-features = false, features = ["alloc"] }
+zstd = { version = "0.13", features = ["zstdmt"], optional = true }
