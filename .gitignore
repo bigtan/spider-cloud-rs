@@ -27,6 +27,9 @@ cloud-uploader.toml
 # Default config name used by all binaries; may contain credentials
 config.toml
 
-# Runtime output: logs and downloaded settlement data
+# Runtime output: logs, debug artifacts, atomic temp files, and downloaded data
 logs/
 data/
+debug_captcha*.jpg
+*.part
+*.tmp

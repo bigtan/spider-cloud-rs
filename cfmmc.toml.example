@@ -3,6 +3,10 @@
 # ====================
 
 debug = false
+# custom_date = "2026-06-11"
+data_dir = "data"
+log_dir = "logs"
+log_retain_days = 30
 
 [captcha]
 # Options: "onnx", "baidu", "onnx_then_baidu", "baidu_then_onnx"
@@ -33,7 +37,7 @@ passwords = ["password1", "password2"]
 
 [notifier.chanify]
 enabled = false
-url = "https://chanify.estan.cn/v1/sender/"
+url = "https://chanify.example.com/v1/sender/"
 token = ""
 
 [notifier.email]
@@ -46,7 +50,7 @@ recipient = ""
 
 [notifier.pushgo]
 enabled = false
-url = "https://pushgo.estan.cn/message"
+url = "https://pushgo.example.com/message"
 api_token = ""
 channel_id = ""
 password = ""

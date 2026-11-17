@@ -1,33 +1,76 @@
 # ====================
-# 应用配置
+# 基础配置
 # ====================
 
-[app]
-baidu_enabled = true
-baidu_app_key = "your_baidu_app_key"
-baidu_app_secret = "your_baidu_app_secret"
-# baidu_config_path = "/home/user/.config/spider-cloud/baidu/config.json"
+debug = false
+server_location = "Backup Server"
+# custom_date = "2026-06-11"
+# work_dir defaults to the OS temporary directory when omitted.
+# work_dir = "/tmp"
+compression_level = 6
+# threads = 4
 
-cloud189_enabled = true
-# cloud189_config_path = "/home/user/.config/spider-cloud/cloud189/config.json"
-# cloud189_username = "your_cloud189_username"
-# cloud189_password = "your_cloud189_password"
-cloud189_use_qr = true
+# ====================
+# 云盘配置
+# ====================
+
+[uploader]
+max_concurrent_chunks = 4
+
+[uploader.baidu]
+enabled = true
+app_key = "your_baidu_app_key"
+app_secret = "your_baidu_app_secret"
+# config_path = "/home/user/.config/spider-cloud/baidu/config.json"
+
+[uploader.cloud189]
+enabled = true
+# config_path = "/home/user/.config/spider-cloud/cloud189/config.json"
+# username = "your_cloud189_username"
+# password = "your_cloud189_password"
+use_qr = true
+
+# ====================
+# 通知配置
+# ====================
+
+[notifier.chanify]
+enabled = false
+url = "https://chanify.example.com/v1/sender/"
+token = ""
+
+[notifier.email]
+enabled = false
+sender = ""
+password = ""
+recipient = ""
+# smtp_host = "smtp.qq.com"
+# smtp_port = 465
+
+[notifier.pushgo]
+enabled = false
+url = "https://pushgo.example.com/message"
+api_token = ""
+channel_id = ""
+password = ""
+hex_key = ""
+icon = ""
+image = ""
 
 # ====================
 # 备份任务
 # ====================
 
 [[backups]]
+archive_name = "example-app"
 source_dir = "/var/www/example-app/"
 remote_dir = "/apps/backups/{date}"
-archive_name = "example-app"
 keep_archive = false
 
 [[backups]]
+archive_name = "database"
 command = "mysqldump -u user -ppassword dbname > /tmp/db.sql"
 source_path = "/tmp/db.sql"
 keep_command_source = false
 remote_dir = "/apps/backups/{date}"
-archive_name = "database"
 keep_archive = false

@@ -32,7 +32,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         if: matrix.os == 'windows-latest'
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Check, build, and test Linux binaries on Debian 13
         if: matrix.os == 'ubuntu-latest'
         shell: bash
@@ -43,9 +43,9 @@ jobs:
             rust:1-trixie sh -ec '
               rustup component add rustfmt clippy
               cargo fmt --all -- --check
-              cargo clippy --all-targets --locked -- -D warnings
+              cargo clippy --workspace --all-targets --locked -- -D warnings
               cargo build --release --bins --locked
-              cargo test --release --all-targets --locked
+              cargo test --workspace --release --all-targets --locked
             '
       - name: Verify Linux binaries on Debian 13
         if: matrix.os == 'ubuntu-latest'
@@ -63,6 +63,8 @@ jobs:
                 if grep -q "not found" /tmp/ldd.txt; then
                   exit 1
                 fi
+                "/app/$binary" --version
+                "/app/$binary" --help
                 # Exercise startup without credentials or network operations.
                 status=0
                 "/app/$binary" unused.toml extra > /tmp/startup.txt 2>&1 || status=$?
@@ -73,10 +75,10 @@ jobs:
             '
       - name: Build Windows binaries
         if: matrix.os == 'windows-latest'
-        run: cargo build --release --bins
+        run: cargo build --release --bins --locked
       - name: Run tests
         if: matrix.os == 'windows-latest'
-        run: cargo test --release --all-targets
+        run: cargo test --workspace --release --all-targets --locked
       - name: Upload Linux build artifacts
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
@@ -97,4 +99,3 @@ jobs:
             target/release/cfmmc-crawler-rs.exe
             target/release/cloud-uploader-rs.exe
           retention-days: 7
-    

@@ -54,6 +54,8 @@ jobs:
                 if grep -q "not found" /tmp/ldd.txt; then
                   exit 1
                 fi
+                "/app/$binary" --version
+                "/app/$binary" --help
                 # Exercise startup without credentials or network operations.
                 status=0
                 "/app/$binary" unused.toml extra > /tmp/startup.txt 2>&1 || status=$?
@@ -64,7 +66,7 @@ jobs:
             '
       - name: Build Windows binaries
         if: matrix.os == 'windows-latest'
-        run: cargo build --release --bins
+        run: cargo build --release --bins --locked
       - name: Prepare release bundle
         shell: bash
         run: |
@@ -108,7 +110,7 @@ jobs:
             *.zip
             *.tar.gz
           retention-days: 7
-        
+
 
   release:
     name: Create Release

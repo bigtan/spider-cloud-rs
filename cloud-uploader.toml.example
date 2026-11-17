@@ -4,70 +4,80 @@
 
 debug = false
 server_location = "Production Server"
-upload_mode = "archive"
+# custom_date = "2026-06-11"
+upload_mode = "archive" # "archive", "files", or "hybrid"
 
 # ====================
 # Archive 模式
 # ====================
 
-archive_source_folder = "/path/to/source/{date}/"
-archive_output = "/path/to/archive/{date}.7z"
-archive_password = ""
+[archive]
+source_folder = "data/{date}/"
+# Pure Rust .tar.zst works out of the box; .7z uses hardened 7z CLI.
+output = "archive/{date}.tar.zst"
+password = ""
 require_archive = true
+# level = 6
+# dict_size = "32m"
+# threads = 4
+upload_path = "/apps/archive/{server_location}/{date}/"
 
 # ====================
 # Files 模式
 # ====================
 
-files_source_folder = "/path/to/source/{date}/"
-file_pattern = "*.csv"
-
-# ====================
-# 上传目标路径
-# ====================
-
-archive_upload_path = "/apps/archive/{server_location}/{date}/"
-files_upload_path = "/apps/files/{server_location}/{date}/"
-
-# ====================
-# 通知配置
-# ====================
-
-chanify_enabled = false
-chanify_url = "https://chanify.estan.cn/v1/sender/"
-chanify_token = ""
-
-email_enabled = false
-email_sender = ""
-email_password = ""
-email_recipient = ""
-# email_smtp_host = "smtp.qq.com"
-# email_smtp_port = 465
-
-pushgo_enabled = false
-pushgo_url = "https://pushgo.estan.cn/message"
-pushgo_api_token = ""
-pushgo_hex_key = ""
-pushgo_channel_id = ""
-pushgo_password = ""
-pushgo_icon = ""
-pushgo_image = ""
+[files]
+source_folder = "data/{date}/"
+pattern = "*.csv"
+upload_path = "/apps/files/{server_location}/{date}/"
 
 # ====================
 # 云盘配置
 # ====================
 
-baidu_enabled = false
-baidu_app_key = ""
-baidu_app_secret = ""
-baidu_config_path = ""
-baidu_archive_upload_path = ""
-baidu_files_upload_path = ""
+[uploader]
+max_concurrent_chunks = 4
 
-cloud189_enabled = false
-cloud189_config_path = ""
-cloud189_username = ""
-cloud189_password = ""
-cloud189_qr_login = false
-cloud189_archive_upload_path = ""
-cloud189_files_upload_path = ""
+[uploader.baidu]
+enabled = false
+app_key = ""
+app_secret = ""
+config_path = ""
+archive_upload_path = ""
+files_upload_path = ""
+
+[uploader.cloud189]
+enabled = false
+config_path = ""
+username = ""
+password = ""
+use_qr = false
+archive_upload_path = ""
+files_upload_path = ""
+
+# ====================
+# 通知配置
+# ====================
+
+[notifier.chanify]
+enabled = false
+url = "https://chanify.example.com/v1/sender/"
+token = ""
+
+[notifier.email]
+enabled = false
+sender = ""
+password = ""
+recipient = ""
+# smtp_host = "smtp.qq.com"
+# smtp_port = 465
+
+[notifier.pushgo]
+enabled = false
+url = "https://pushgo.example.com/message"
+api_token = ""
+channel_id = ""
+password = ""
+hex_key = ""
+icon = ""
+image = ""
