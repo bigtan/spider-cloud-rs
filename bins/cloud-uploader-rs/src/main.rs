@@ -170,8 +170,6 @@ fn handle_archive_mode(
 
     let archive_cfg = ArchiveConfig {
         level: config.archive.level,
-        dict_size: config.archive.dict_size.clone(),
-        password: config.archive.password.clone(),
         threads: config.archive.threads,
         reuse_existing: true,
     };

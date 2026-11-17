@@ -13,12 +13,10 @@ upload_mode = "archive" # "archive", "files", or "hybrid"
 
 [archive]
 source_folder = "data/{date}/"
-# Pure Rust .tar.zst works out of the box; .7z uses hardened 7z CLI.
+# Pure-Rust multi-threaded .tar.zst (.tar.zst or .tzst)
 output = "archive/{date}.tar.zst"
-password = ""
 require_archive = true
 # level = 6
-# dict_size = "32m"
 # threads = 4
 upload_path = "/apps/archive/{server_location}/{date}/"
 
@@ -28,7 +26,7 @@ upload_path = "/apps/archive/{server_location}/{date}/"
 
 [files]
 source_folder = "data/{date}/"
-pattern = "*.csv"
+pattern = "*.parquet" # e.g., "*.parquet" or "*.csv"
 upload_path = "/apps/files/{server_location}/{date}/"
 
 # ====================

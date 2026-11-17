@@ -80,8 +80,6 @@ fn main() -> Result<()> {
 
     let archive_cfg = ArchiveConfig {
         level: Some(config.compression_level),
-        dict_size: None,
-        password: None,
         threads: config.threads,
         reuse_existing: false,
     };

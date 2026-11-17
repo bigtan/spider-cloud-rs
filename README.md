@@ -10,7 +10,7 @@ A 6-crate Rust workspace for:
 
 ```text
 crates/
-  spider-common/       Shared FS atomics, CLI parsing, logging, retry, templates, and archiving (.tar.zst / 7z)
+  spider-common/       Shared FS atomics, CLI parsing, logging, retry, templates, and archiving (multi-threaded .tar.zst)
   spider-notify/       Chanify, SMTP Email (HTML-escaped), and encrypted Pushgo dispatchers
   spider-uploader/     BaiduPan & Cloud189 uploaders, single-pass digests, and parallel UploadCoordinator
 bins/
@@ -68,7 +68,7 @@ cargo run --release --bin cloud-uploader-rs -- cloud-uploader.toml
 ```
 
 - Supports `upload_mode = "archive" | "files" | "hybrid"`.
-- `[archive]` defaults to pure-Rust multi-threaded `.tar.zst` (`archive/{date}.tar.zst`) with atomic writes; `.7z` uses hardened `7z` (`-mhe=on`, `--`, `32m` dict, `7z t` integrity verification).
+- `[archive]` uses pure-Rust multi-threaded `.tar.zst` (`archive/{date}.tar.zst` or `.tzst`) with atomic writes and archive integrity verification.
 - `[files]` uploads matching glob files (empty matches cleanly skip with `NoFilesFound`).
 - `[uploader.{baidu,cloud189}]` and `[notifier.{chanify,email,pushgo}]`.
 

@@ -15,7 +15,6 @@ tar = { workspace = true, optional = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
-zeroize = { workspace = true }
 zstd = { workspace = true, optional = true }
 
 [lints]
