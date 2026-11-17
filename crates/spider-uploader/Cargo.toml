@@ -1,28 +1,31 @@
 [package]
 name = "spider-uploader"
-version = "0.2.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-spider-common = { path = "../spider-common", default-features = false }
-thiserror = "2.0"
-aes = "0.9"
-cipher = "0.5"
-rsa = { version = "0.9", features = ["pem"] }
-hmac = "0.13"
-sha1 = "0.11"
-md5 = "0.8"
-hex = "0.4"
-base64 = "0.23"
-httpdate = "1"
-chrono = { version = "0.4", features = ["serde"] }
-quick-xml = { version = "0.41", features = ["serialize"] }
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "multipart", "form", "cookies", "rustls"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tracing = "0.1"
-url = "2"
-urlencoding = "2.1"
-uuid = { version = "1", features = ["v4"] }
-dirs = "6.0"
-zeroize = { version = "1.9", default-features = false, features = ["alloc"] }
+spider-common = { workspace = true }
+thiserror = { workspace = true }
+aes = { workspace = true }
+cipher = { workspace = true }
+rsa = { workspace = true }
+hmac = { workspace = true }
+sha1 = { workspace = true }
+md5 = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+httpdate = { workspace = true }
+chrono = { workspace = true }
+quick-xml = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+urlencoding = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+zeroize = { workspace = true }
+
+[lints]
+workspace = true

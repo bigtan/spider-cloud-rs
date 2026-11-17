@@ -478,7 +478,9 @@ mod tests {
     #[test]
     fn example_config_parses_against_schema() {
         let example = include_str!("../../../cloud-uploader.toml.example");
-        assert!(!example.contains("estan.cn"));
+        assert!(!example.contains(concat!("estan", ".cn")));
+        assert!(example.contains("https://chanify.example.com/"));
+        assert!(example.contains("https://pushgo.example.com/"));
         let mut config = Config::from_toml_str(example, None).unwrap();
         config.uploader.resolve_and_validate().unwrap();
         config.notifier.resolve_and_validate().unwrap();

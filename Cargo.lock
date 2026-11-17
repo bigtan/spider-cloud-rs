@@ -206,6 +206,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "backup-to-cloud"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "spider-common",
+ "spider-notify",
+ "spider-uploader",
+ "toml",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -331,6 +346,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
+name = "cfmmc-crawler-rs"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.0",
+ "calamine",
+ "chrono",
+ "image",
+ "indexmap",
+ "ndarray",
+ "ort",
+ "rand 0.10.2",
+ "reqwest",
+ "serde",
+ "spider-common",
+ "spider-notify",
+ "toml",
+ "tracing",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "chacha20"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -364,6 +402,22 @@ dependencies = [
  "block-buffer",
  "crypto-common 0.2.2",
  "inout",
+]
+
+[[package]]
+name = "cloud-uploader-rs"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "glob",
+ "serde",
+ "spider-common",
+ "spider-notify",
+ "spider-uploader",
+ "toml",
+ "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -2763,42 +2817,67 @@ dependencies = [
 ]
 
 [[package]]
-name = "spider-cloud-rs"
-version = "0.1.6"
+name = "spider-common"
+version = "0.2.0"
 dependencies = [
- "aes",
+ "anyhow",
+ "chrono",
+ "rand 0.10.2",
+ "tar",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "zeroize",
+ "zstd",
+]
+
+[[package]]
+name = "spider-notify"
+version = "0.2.0"
+dependencies = [
  "aes-gcm",
  "anyhow",
  "base64 0.23.0",
- "calamine",
+ "hex",
+ "lettre",
+ "rand 0.10.2",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "spider-common",
+ "toml",
+ "tracing",
+ "url",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "spider-uploader"
+version = "0.2.0"
+dependencies = [
+ "aes",
+ "base64 0.23.0",
  "chrono",
  "cipher",
  "dirs",
- "glob",
  "hex",
  "hmac",
  "httpdate",
- "image",
- "indexmap",
- "lettre",
  "md5",
- "ndarray",
- "ort",
  "quick-xml",
- "rand 0.10.2",
  "reqwest",
  "rsa",
  "serde",
  "serde_json",
  "sha1",
- "tar",
- "toml",
+ "spider-common",
+ "thiserror",
  "tracing",
- "tracing-subscriber",
  "url",
  "urlencoding",
  "uuid",
- "zstd",
+ "zeroize",
 ]
 
 [[package]]

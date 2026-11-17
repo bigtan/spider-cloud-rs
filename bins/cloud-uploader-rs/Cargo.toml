@@ -1,20 +1,23 @@
 [package]
 name = "cloud-uploader-rs"
-version = "0.2.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [[bin]]
 name = "cloud-uploader-rs"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
-glob = "0.3"
-serde = { version = "1.0", features = ["derive"] }
-spider-common = { path = "../../crates/spider-common" }
-spider-notify = { path = "../../crates/spider-notify" }
-spider-uploader = { path = "../../crates/spider-uploader" }
-toml = "1.1"
-tracing = "0.1"
-zeroize = { version = "1.9", default-features = false, features = ["alloc"] }
+spider-common = { workspace = true, features = ["archive"] }
+spider-notify = { workspace = true }
+spider-uploader = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+glob = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+zeroize = { workspace = true }
+
+[lints]
+workspace = true

@@ -529,4 +529,14 @@ mod tests {
         );
         assert!(cfg.validate_runtime_paths().is_err());
     }
+
+    #[test]
+    fn example_config_parses_and_validates() {
+        let example = include_str!("../../../cfmmc.toml.example");
+        assert!(!example.contains(concat!("estan", ".cn")));
+        assert!(example.contains("https://chanify.example.com/"));
+        assert!(example.contains("https://pushgo.example.com/"));
+        let mut cfg = parse_cfg(example);
+        cfg.resolve_and_validate(None).unwrap();
+    }
 }

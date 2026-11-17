@@ -253,13 +253,15 @@ fn upload_file(
     coordinator: &mut UploadCoordinator,
     target: UploadTarget,
 ) -> Result<UploadResult> {
-    coordinator.upload_to_dest(file_path, |provider| match (target, provider) {
-        (UploadTarget::Archive, "BaiduPan") => config.baidu_archive_dest(),
-        (UploadTarget::Archive, "Cloud189") => config.cloud189_archive_dest(),
-        (UploadTarget::Files, "BaiduPan") => config.baidu_files_dest(),
-        (UploadTarget::Files, "Cloud189") => config.cloud189_files_dest(),
-        _ => None,
-    })
+    coordinator
+        .upload_to_dest(file_path, |provider| match (target, provider) {
+            (UploadTarget::Archive, "BaiduPan") => config.baidu_archive_dest(),
+            (UploadTarget::Archive, "Cloud189") => config.cloud189_archive_dest(),
+            (UploadTarget::Files, "BaiduPan") => config.baidu_files_dest(),
+            (UploadTarget::Files, "Cloud189") => config.cloud189_files_dest(),
+            _ => None,
+        })
+        .map_err(anyhow::Error::from)
 }
 
 fn has_failures(result: &UploadResult) -> bool {
