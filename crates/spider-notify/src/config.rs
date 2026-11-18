@@ -495,7 +495,10 @@ mod tests {
     #[test]
     fn env_overrides_non_empty_toml_and_blank_env_falls_back_to_toml() {
         let env_map: HashMap<&str, &str> = [
-            ("CHANIFY_URL", " https://env-chanify.example.com/v1/sender/ "),
+            (
+                "CHANIFY_URL",
+                " https://env-chanify.example.com/v1/sender/ ",
+            ),
             ("CHANIFY_TOKEN", "   "),
             ("EMAIL_SENDER", "env-from@example.com"),
             ("EMAIL_PASSWORD", ""),
@@ -551,10 +554,7 @@ mod tests {
         assert_eq!(cfg.email.sender.as_deref(), Some("env-from@example.com"));
         assert_eq!(cfg.email.password.as_deref(), Some("toml-epw"));
         assert_eq!(cfg.email.recipient.as_deref(), Some("env-to@example.com"));
-        assert_eq!(
-            cfg.email.smtp_host.as_deref(),
-            Some("smtp.env.example.com")
-        );
+        assert_eq!(cfg.email.smtp_host.as_deref(), Some("smtp.env.example.com"));
         assert_eq!(
             cfg.pushgo.url.as_deref(),
             Some("https://env-pushgo.example.com/message")
