@@ -89,13 +89,14 @@ impl fmt::Debug for PushgoConfig {
 }
 
 impl NotifierConfig {
-    /// Normalize blank strings to `None`, fill missing values from environment variables,
-    /// and fail fast if any enabled channel has invalid or incomplete settings.
+    /// Normalize blank strings to `None`, override with non-blank environment variables
+    /// (falling back to config values when unset or blank), and fail fast if any enabled
+    /// channel has invalid or incomplete settings.
     pub fn resolve_and_validate(&mut self) -> Result<()> {
         self.resolve_with_env(|key| env::var(key).ok())
     }
 
-    /// Testable helper that resolves missing fields via `env_lookup` and validates enabled channels.
+    /// Testable helper that resolves fields via `env_lookup` (env overrides config) and validates enabled channels.
     pub(crate) fn resolve_with_env(
         &mut self,
         mut env_lookup: impl FnMut(&str) -> Option<String>,
@@ -272,9 +273,7 @@ fn fill_from_env(
     var_name: &str,
     env_lookup: &mut impl FnMut(&str) -> Option<String>,
 ) {
-    if target.is_none()
-        && let Some(raw) = env_lookup(var_name)
-    {
+    if let Some(raw) = env_lookup(var_name) {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
             *target = Some(trimmed.to_string());
@@ -491,5 +490,100 @@ mod tests {
         assert_eq!(cfg.email.smtp_host.as_deref(), Some("smtp.example.com"));
         assert_eq!(cfg.pushgo.channel_id.as_deref(), Some("env-chan"));
         assert!(cfg.pushgo.icon.is_none());
+    }
+
+    #[test]
+    fn env_overrides_non_empty_toml_and_blank_env_falls_back_to_toml() {
+        let env_map: HashMap<&str, &str> = [
+            ("CHANIFY_URL", " https://env-chanify.example.com/v1/sender/ "),
+            ("CHANIFY_TOKEN", "   "),
+            ("EMAIL_SENDER", "env-from@example.com"),
+            ("EMAIL_PASSWORD", ""),
+            ("EMAIL_RECIPIENT", "env-to@example.com"),
+            ("EMAIL_SMTP_HOST", "smtp.env.example.com"),
+            ("PUSHGO_URL", "https://env-pushgo.example.com/message"),
+            ("PUSHGO_API_TOKEN", "env-api"),
+            (
+                "PUSHGO_HEX_KEY",
+                "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100",
+            ),
+            ("PUSHGO_CHANNEL_ID", "env-chan"),
+            ("PUSHGO_PASSWORD", "env-ppw"),
+        ]
+        .into_iter()
+        .collect();
+
+        let mut cfg = NotifierConfig {
+            chanify: ChanifyConfig {
+                enabled: true,
+                url: Some("https://toml-chanify.example.com/v1/sender/".to_string()),
+                token: Some("toml-tok".to_string()),
+            },
+            email: EmailConfig {
+                enabled: true,
+                sender: Some("toml-from@example.com".to_string()),
+                password: Some("toml-epw".to_string()),
+                recipient: Some("toml-to@example.com".to_string()),
+                smtp_host: Some("smtp.toml.example.com".to_string()),
+                smtp_port: Some(465),
+            },
+            pushgo: PushgoConfig {
+                enabled: true,
+                url: Some("https://toml-pushgo.example.com/message".to_string()),
+                api_token: Some("toml-api".to_string()),
+                hex_key: Some("00112233445566778899aabbccddeeff".to_string()),
+                channel_id: Some("toml-chan".to_string()),
+                password: Some("toml-ppw".to_string()),
+                icon: None,
+                image: None,
+            },
+        };
+
+        cfg.resolve_with_env(|k| env_map.get(k).map(|v| (*v).to_string()))
+            .unwrap();
+
+        assert_eq!(
+            cfg.chanify.url.as_deref(),
+            Some("https://env-chanify.example.com/v1/sender/")
+        );
+        // Blank env falls back to TOML
+        assert_eq!(cfg.chanify.token.as_deref(), Some("toml-tok"));
+        assert_eq!(cfg.email.sender.as_deref(), Some("env-from@example.com"));
+        assert_eq!(cfg.email.password.as_deref(), Some("toml-epw"));
+        assert_eq!(cfg.email.recipient.as_deref(), Some("env-to@example.com"));
+        assert_eq!(
+            cfg.email.smtp_host.as_deref(),
+            Some("smtp.env.example.com")
+        );
+        assert_eq!(
+            cfg.pushgo.url.as_deref(),
+            Some("https://env-pushgo.example.com/message")
+        );
+        assert_eq!(cfg.pushgo.api_token.as_deref(), Some("env-api"));
+        assert_eq!(
+            cfg.pushgo.hex_key.as_deref(),
+            Some("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100")
+        );
+        assert_eq!(cfg.pushgo.channel_id.as_deref(), Some("env-chan"));
+        assert_eq!(cfg.pushgo.password.as_deref(), Some("env-ppw"));
+    }
+
+    #[test]
+    fn unset_env_falls_back_to_toml() {
+        let mut cfg = NotifierConfig {
+            chanify: ChanifyConfig {
+                enabled: true,
+                url: Some("https://toml-chanify.example.com/v1/sender/".to_string()),
+                token: Some("toml-tok".to_string()),
+            },
+            ..Default::default()
+        };
+
+        cfg.resolve_with_env(|_| None).unwrap();
+        assert_eq!(
+            cfg.chanify.url.as_deref(),
+            Some("https://toml-chanify.example.com/v1/sender/")
+        );
+        assert_eq!(cfg.chanify.token.as_deref(), Some("toml-tok"));
     }
 }

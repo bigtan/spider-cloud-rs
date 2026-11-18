@@ -10,10 +10,12 @@ use tracing::debug;
 use url::Url;
 use zeroize::Zeroize;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountConfig {
+    #[serde(default)]
     pub accounts: Vec<String>,
+    #[serde(default)]
     pub passwords: Vec<String>,
 }
 
@@ -140,13 +142,15 @@ pub struct Config {
     pub baidu_ocr: BaiduOcrConfig,
     #[serde(default)]
     pub onnx_captcha: OnnxCaptchaConfig,
+    #[serde(default)]
     pub account: AccountConfig,
     #[serde(default)]
     pub notifier: NotifierConfig,
 }
 
 impl Config {
-    /// Apply environment variable fallbacks, validate all fields, and resolve the target date.
+    /// Apply environment variable overrides (falling back to config values when unset or blank),
+    /// validate all fields, and resolve the target date.
     pub fn resolve_and_validate(&mut self, date_override: Option<&str>) -> Result<NaiveDate> {
         self.resolve_with_env(date_override, |key| std::env::var(key).ok())
     }
@@ -156,28 +160,38 @@ impl Config {
         date_override: Option<&str>,
         mut env_lookup: impl FnMut(&str) -> Option<String>,
     ) -> Result<NaiveDate> {
-        self.apply_env_fallbacks(&mut env_lookup);
+        self.apply_env_overrides(&mut env_lookup);
         self.validate_schema()?;
         self.notifier.resolve_and_validate()?;
         self.resolve_target_date(date_override)
     }
 
-    fn apply_env_fallbacks(&mut self, env_lookup: &mut impl FnMut(&str) -> Option<String>) {
+    fn apply_env_overrides(&mut self, env_lookup: &mut impl FnMut(&str) -> Option<String>) {
         self.baidu_ocr.api_key = self.baidu_ocr.api_key.trim().to_string();
         self.baidu_ocr.secret_key = self.baidu_ocr.secret_key.trim().to_string();
         self.baidu_ocr.url = self.baidu_ocr.url.trim().to_string();
 
-        if self.baidu_ocr.api_key.is_empty()
-            && let Some(val) = env_lookup("BAIDU_OCR_API_KEY")
+        if let Some(val) = env_lookup("BAIDU_OCR_API_KEY")
             && !val.trim().is_empty()
         {
             self.baidu_ocr.api_key = val.trim().to_string();
         }
-        if self.baidu_ocr.secret_key.is_empty()
-            && let Some(val) = env_lookup("BAIDU_OCR_SECRET_KEY")
+        if let Some(val) = env_lookup("BAIDU_OCR_SECRET_KEY")
             && !val.trim().is_empty()
         {
             self.baidu_ocr.secret_key = val.trim().to_string();
+        }
+
+        if let Some(val) = env_lookup("CFMMC_ACCOUNTS")
+            && !val.trim().is_empty()
+        {
+            self.account.accounts = val.split(',').map(|s| s.trim().to_string()).collect();
+        }
+        if let Some(val) = env_lookup("CFMMC_PASSWORDS")
+            && !val.trim().is_empty()
+        {
+            self.account.passwords.zeroize();
+            self.account.passwords = val.split(',').map(|s| s.trim().to_string()).collect();
         }
     }
 
@@ -493,8 +507,9 @@ mod tests {
     }
 
     #[test]
-    fn baidu_ocr_env_fallback_populates_empty_credentials() {
-        let mut cfg = parse_cfg(
+    fn baidu_ocr_env_populates_empty_and_overrides_non_empty_and_falls_back_to_toml() {
+        // 1. TOML empty -> populated by env
+        let mut empty_toml = parse_cfg(
             r#"
             [captcha]
             provider = "baidu"
@@ -503,14 +518,168 @@ mod tests {
             passwords = ["pass_01"]
             "#,
         );
-        cfg.resolve_with_env(None, |key| match key {
-            "BAIDU_OCR_API_KEY" => Some("env-api-key".to_string()),
-            "BAIDU_OCR_SECRET_KEY" => Some("env-secret-key".to_string()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(cfg.baidu_ocr.api_key, "env-api-key");
-        assert_eq!(cfg.baidu_ocr.secret_key, "env-secret-key");
+        empty_toml
+            .resolve_with_env(None, |key| match key {
+                "BAIDU_OCR_API_KEY" => Some("env-api-key".to_string()),
+                "BAIDU_OCR_SECRET_KEY" => Some("env-secret-key".to_string()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(empty_toml.baidu_ocr.api_key, "env-api-key");
+        assert_eq!(empty_toml.baidu_ocr.secret_key, "env-secret-key");
+
+        // 2. Non-empty TOML -> overridden by non-blank env, blank env falls back to TOML
+        let mut override_toml = parse_cfg(
+            r#"
+            [captcha]
+            provider = "baidu"
+            [baidu_ocr]
+            api_key = "toml-api-key"
+            secret_key = "toml-secret-key"
+            [account]
+            accounts = ["acc_01"]
+            passwords = ["pass_01"]
+            "#,
+        );
+        override_toml
+            .resolve_with_env(None, |key| match key {
+                "BAIDU_OCR_API_KEY" => Some(" env-api-key ".to_string()),
+                "BAIDU_OCR_SECRET_KEY" => Some("   ".to_string()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(override_toml.baidu_ocr.api_key, "env-api-key");
+        assert_eq!(override_toml.baidu_ocr.secret_key, "toml-secret-key");
+
+        // 3. Unset env -> falls back to TOML
+        let mut fallback_toml = parse_cfg(
+            r#"
+            [captcha]
+            provider = "baidu"
+            [baidu_ocr]
+            api_key = "toml-api-key"
+            secret_key = "toml-secret-key"
+            [account]
+            accounts = ["acc_01"]
+            passwords = ["pass_01"]
+            "#,
+        );
+        fallback_toml.resolve_with_env(None, |_| None).unwrap();
+        assert_eq!(fallback_toml.baidu_ocr.api_key, "toml-api-key");
+        assert_eq!(fallback_toml.baidu_ocr.secret_key, "toml-secret-key");
+    }
+
+    #[test]
+    fn account_env_overrides_and_populates_omitted_or_empty_toml() {
+        // 1. Omitted [account] populated by env
+        let mut omitted = parse_cfg(
+            r#"
+            [captcha]
+            provider = "onnx"
+            "#,
+        );
+        omitted
+            .resolve_with_env(None, |key| match key {
+                "CFMMC_ACCOUNTS" => Some(" acc_01 , acc_02 ".to_string()),
+                "CFMMC_PASSWORDS" => Some(" pass_01 , pass_02 ".to_string()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(omitted.account.accounts, vec!["acc_01", "acc_02"]);
+        assert_eq!(omitted.account.passwords, vec!["pass_01", "pass_02"]);
+
+        // 2. Empty accounts/passwords in TOML populated by env
+        let mut empty_lists = parse_cfg(
+            r#"
+            [captcha]
+            provider = "onnx"
+            [account]
+            accounts = []
+            passwords = []
+            "#,
+        );
+        empty_lists
+            .resolve_with_env(None, |key| match key {
+                "CFMMC_ACCOUNTS" => Some("acc_a".to_string()),
+                "CFMMC_PASSWORDS" => Some("pass_a".to_string()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(empty_lists.account.accounts, vec!["acc_a"]);
+        assert_eq!(empty_lists.account.passwords, vec!["pass_a"]);
+
+        // 3. Non-empty TOML overridden by non-blank env
+        let mut override_toml = parse_cfg(
+            r#"
+            [captcha]
+            provider = "onnx"
+            [account]
+            accounts = ["toml_acc"]
+            passwords = ["toml_pass"]
+            "#,
+        );
+        override_toml
+            .resolve_with_env(None, |key| match key {
+                "CFMMC_ACCOUNTS" => Some("env_acc1, env_acc2".to_string()),
+                "CFMMC_PASSWORDS" => Some("env_p1, env_p2".to_string()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(override_toml.account.accounts, vec!["env_acc1", "env_acc2"]);
+        assert_eq!(override_toml.account.passwords, vec!["env_p1", "env_p2"]);
+
+        // 4. Unset or blank env falls back to TOML
+        let mut fallback_toml = parse_cfg(
+            r#"
+            [captcha]
+            provider = "onnx"
+            [account]
+            accounts = ["toml_acc"]
+            passwords = ["toml_pass"]
+            "#,
+        );
+        fallback_toml
+            .resolve_with_env(None, |key| match key {
+                "CFMMC_ACCOUNTS" => Some("   ".to_string()),
+                "CFMMC_PASSWORDS" => Some("".to_string()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(fallback_toml.account.accounts, vec!["toml_acc"]);
+        assert_eq!(fallback_toml.account.passwords, vec!["toml_pass"]);
+    }
+
+    #[test]
+    fn account_env_validates_safe_name_and_count_match() {
+        let mut unsafe_env = parse_cfg(
+            r#"
+            [captcha]
+            provider = "onnx"
+            "#,
+        );
+        let err = unsafe_env
+            .resolve_with_env(None, |key| match key {
+                "CFMMC_ACCOUNTS" => Some("../evil".to_string()),
+                "CFMMC_PASSWORDS" => Some("secret".to_string()),
+                _ => None,
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("account"));
+
+        let mut mismatch_env = parse_cfg(
+            r#"
+            [captcha]
+            provider = "onnx"
+            "#,
+        );
+        let err = mismatch_env
+            .resolve_with_env(None, |key| match key {
+                "CFMMC_ACCOUNTS" => Some("acc1, acc2".to_string()),
+                "CFMMC_PASSWORDS" => Some("pass1".to_string()),
+                _ => None,
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("don't match"));
     }
 
     #[test]

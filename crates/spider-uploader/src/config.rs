@@ -42,8 +42,9 @@ impl UploadersConfig {
         self.baidu.enabled || self.cloud189.enabled
     }
 
-    /// Normalize blank optional strings, apply environment variable fallbacks,
-    /// and validate concurrency bounds and required credentials.
+    /// Normalize blank optional strings, apply environment variable overrides
+    /// (falling back to config values when unset or blank), and validate concurrency
+    /// bounds and required credentials.
     pub fn resolve_and_validate(&mut self) -> Result<()> {
         self.resolve_and_validate_with(|key| std::env::var(key).ok())
     }
@@ -64,22 +65,20 @@ impl UploadersConfig {
         normalize_opt_trimmed(&mut self.cloud189.archive_upload_path);
         normalize_opt_trimmed(&mut self.cloud189.files_upload_path);
 
-        if self.baidu.app_key.is_none() {
-            self.baidu.app_key = lookup_non_blank(&env_lookup, "BAIDU_APP_KEY", true);
+        if let Some(val) = lookup_non_blank(&env_lookup, "BAIDU_APP_KEY", true) {
+            self.baidu.app_key = Some(val);
         }
-        if self.baidu.app_secret.is_none() {
-            self.baidu.app_secret = lookup_non_blank(&env_lookup, "BAIDU_APP_SECRET", false);
+        if let Some(val) = lookup_non_blank(&env_lookup, "BAIDU_APP_SECRET", false) {
+            self.baidu.app_secret = Some(val);
         }
 
-        if self.cloud189.username.is_none() {
-            self.cloud189.username = lookup_non_blank(&env_lookup, "CLOUD189_USERNAME", true);
+        if let Some(val) = lookup_non_blank(&env_lookup, "CLOUD189_USERNAME", true) {
+            self.cloud189.username = Some(val);
         }
-        if self.cloud189.password.is_none() {
-            self.cloud189.password = lookup_non_blank(&env_lookup, "CLOUD189_PASSWORD", false);
+        if let Some(val) = lookup_non_blank(&env_lookup, "CLOUD189_PASSWORD", false) {
+            self.cloud189.password = Some(val);
         }
-        if !self.cloud189.use_qr
-            && let Some(raw_qr) = lookup_non_blank(&env_lookup, "CLOUD189_USE_QR", true)
-        {
+        if let Some(raw_qr) = lookup_non_blank(&env_lookup, "CLOUD189_USE_QR", true) {
             self.cloud189.use_qr = parse_env_bool(&raw_qr).ok_or_else(|| {
                 UploadError::InvalidConfig(format!(
                     "invalid CLOUD189_USE_QR value '{raw_qr}'; expected true/false/1/0/yes/no/on/off"
@@ -357,6 +356,62 @@ mod tests {
         cfg.resolve_and_validate_with(|k| (k == "CLOUD189_USE_QR").then(|| "true".to_string()))
             .unwrap();
         assert!(cfg.cloud189.use_qr);
+    }
+
+    #[test]
+    fn env_overrides_non_empty_toml_and_blank_or_unset_env_falls_back_to_toml() {
+        let mut cfg = UploadersConfig {
+            baidu: BaiduUploaderConfig {
+                enabled: true,
+                app_key: Some("toml-key".to_string()),
+                app_secret: Some("toml-secret".to_string()),
+                ..Default::default()
+            },
+            cloud189: Cloud189UploaderConfig {
+                enabled: true,
+                username: Some("toml-user".to_string()),
+                password: Some("toml-pass".to_string()),
+                use_qr: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let env_map = HashMap::from([
+            ("BAIDU_APP_KEY", " env-key "),
+            ("BAIDU_APP_SECRET", "   "),
+            ("CLOUD189_USERNAME", "env-user"),
+            ("CLOUD189_PASSWORD", "env-pass"),
+            ("CLOUD189_USE_QR", "false"),
+        ]);
+
+        cfg.resolve_and_validate_with(|k| env_map.get(k).map(|v| (*v).to_string()))
+            .unwrap();
+
+        assert_eq!(cfg.baidu.app_key.as_deref(), Some("env-key"));
+        // Blank env falls back to TOML
+        assert_eq!(cfg.baidu.app_secret.as_deref(), Some("toml-secret"));
+        assert_eq!(cfg.cloud189.username.as_deref(), Some("env-user"));
+        assert_eq!(cfg.cloud189.password.as_deref(), Some("env-pass"));
+        // Env overrides TOML use_qr=true -> false
+        assert!(!cfg.cloud189.use_qr);
+
+        // Unset env falls back to TOML
+        let mut fallback_cfg = UploadersConfig {
+            baidu: BaiduUploaderConfig {
+                enabled: true,
+                app_key: Some("toml-key".to_string()),
+                app_secret: Some("toml-secret".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        fallback_cfg.resolve_and_validate_with(|_| None).unwrap();
+        assert_eq!(fallback_cfg.baidu.app_key.as_deref(), Some("toml-key"));
+        assert_eq!(
+            fallback_cfg.baidu.app_secret.as_deref(),
+            Some("toml-secret")
+        );
     }
 
     #[test]

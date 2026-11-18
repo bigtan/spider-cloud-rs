@@ -19,6 +19,7 @@ captcha_length = 6
 
 [baidu_ocr]
 # Required only when captcha.provider is "baidu", "onnx_then_baidu", or "baidu_then_onnx".
+# Can be overridden by non-blank env vars: BAIDU_OCR_API_KEY, BAIDU_OCR_SECRET_KEY
 api_key = ""
 secret_key = ""
 url = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic"
@@ -26,6 +27,10 @@ url = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic"
 # ====================
 # 账户配置
 # ====================
+# Can be omitted or left empty if provided via comma-separated env vars:
+#   CFMMC_ACCOUNTS="account1,account2"
+#   CFMMC_PASSWORDS="password1,password2"
+# Non-blank env vars take precedence over TOML values; unset/blank env vars fall back to TOML.
 
 [account]
 accounts = ["account1", "account2"]
@@ -34,6 +39,10 @@ passwords = ["password1", "password2"]
 # ====================
 # 通知配置
 # ====================
+# Non-blank env vars take precedence over TOML values:
+#   Chanify: CHANIFY_URL, CHANIFY_TOKEN
+#   Email:   EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT, EMAIL_SMTP_HOST
+#   Pushgo:  PUSHGO_URL, PUSHGO_API_TOKEN, PUSHGO_HEX_KEY, PUSHGO_CHANNEL_ID, PUSHGO_PASSWORD
 
 [notifier.chanify]
 enabled = false
